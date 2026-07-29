@@ -21,7 +21,9 @@ local aura = combat:module{name = "kill aura", description = "swings at everythi
 aura:dropdown{name = "mode", values = {"legit", "rage"}, default = "legit"}
 aura:slider{name = "swings", min = 1, max = 20, default = 12, suffix = " cps"}
 aura:slider{name = "targets", min = 1, max = 6, default = 3}
-aura:toggle{name = "hold weapon only", default = true}
+aura:toggle{name = "silent swap", default = true}
+aura:slider{name = "swap delay", min = 0, max = 200, default = 40, suffix = " ms"}
+aura:toggle{name = "hold weapon only", default = false}
 
 aura.on_enable = function(self)
 	if not bedwars.ready() then
@@ -29,44 +31,106 @@ aura.on_enable = function(self)
 		error("sword controller not found")
 	end
 	self.next_swing = 0
+	self.swapping = false
+
+	-- if the swap is interrupted mid swing, put the old item back on disable
+	self.bin:add(function()
+		self.swapping = false
+	end)
 end
 
 aura.on_tick = function(self)
 	local now = os.clock()
-	if now < (self.next_swing or 0) then
+	if now < (self.next_swing or 0) or self.swapping then
 		return
 	end
 
-	if self:get("hold weapon only") and not bedwars.hand_item() then
+	local silent = self:get("silent swap")
+
+	-- with silent swap on it does not matter what you are holding, the sword is
+	-- equipped for the swing and the old item goes straight back
+	if not silent and self:get("hold weapon only") and not bedwars.hand_item() then
 		return
 	end
 
-	-- reach raises the range the client will accept, so use it when it is on
 	local range = reach.range_studs() or bedwars.attack_range()
-	local swung = false
 
+	local targets = {}
 	if self:get("mode") == "legit" then
-		-- one target, picked by the games own team, sight and match checks
 		local target = bedwars.target_in_range(range)
 		if target then
-			swung = bedwars.attack(target)
+			targets[1] = target
 		end
 	else
 		local found = bedwars.entities_in_range(range)
 		local limit = math.min(#found, self:get("targets"))
 		for index = 1, limit do
-			if bedwars.attack(found[index].entity) then
-				swung = true
-			end
+			targets[index] = found[index].entity
 		end
 	end
 
-	if swung then
-		self.next_swing = now + 1 / math.max(self:get("swings"), 1)
-	else
+	if #targets == 0 then
 		self.next_swing = now + 0.05
+		return
 	end
+
+	local function swing()
+		local swung = false
+		for _, target in ipairs(targets) do
+			if bedwars.attack(target) then
+				swung = true
+			end
+		end
+		return swung
+	end
+
+	local held = bedwars.held_tool()
+
+	if not silent or bedwars.is_sword(held) then
+		if swing() then
+			self.next_swing = now + 1 / math.max(self:get("swings"), 1)
+		else
+			self.next_swing = now + 0.05
+		end
+		return
+	end
+
+	local sword = bedwars.best_sword()
+	if not sword then
+		-- nothing to swap to, fall back to swinging with whatever is in hand
+		if swing() then
+			self.next_swing = now + 1 / math.max(self:get("swings"), 1)
+		else
+			self.next_swing = now + 0.05
+		end
+		return
+	end
+
+	-- the equip is a server round trip, so the swap runs off the tick thread
+	self.swapping = true
+	self.next_swing = now + 1 / math.max(self:get("swings"), 1)
+
+	task.spawn(function()
+		local wait_time = self:get("swap delay") / 1000
+
+		bedwars.equip(sword)
+		if wait_time > 0 then
+			task.wait(wait_time)
+		end
+
+		pcall(swing)
+
+		if held and held ~= sword and held.Parent then
+			if wait_time > 0 then
+				task.wait(wait_time)
+			end
+			bedwars.equip(held)
+		end
+
+		self.swapping = false
+	end)
 end
+
 
 -- reach
 -- vape writes the shared combat constant, but attackEntity only falls back to

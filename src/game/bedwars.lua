@@ -736,6 +736,65 @@ function bedwars.damage_block(block_position, hit_position)
 	return ok
 end
 
+-- the tool the server currently thinks is in your hand
+function bedwars.held_tool()
+	local character = util.character()
+	if not character then
+		return nil
+	end
+
+	local slot = character:FindFirstChild("HandInvItem")
+	if slot and slot.Value then
+		return slot.Value
+	end
+
+	return character:FindFirstChildOfClass("Tool")
+end
+
+function bedwars.is_sword(tool)
+	if not tool then
+		return false
+	end
+	local meta = bedwars.item_meta()
+	local entry = meta and meta[tool.Name]
+	return type(entry) == "table" and type(entry.sword) == "table"
+end
+
+-- the hardest hitting sword you are carrying, hand or backpack
+function bedwars.best_sword()
+	local character = util.character()
+	local meta = bedwars.item_meta()
+	if not character or not meta then
+		return nil
+	end
+
+	local player = players.LocalPlayer
+	local containers = {character}
+	local backpack = player and player:FindFirstChild("Backpack")
+	if backpack then
+		table.insert(containers, backpack)
+	end
+
+	local best, best_damage
+
+	for _, container in ipairs(containers) do
+		for _, tool in ipairs(container:GetChildren()) do
+			if tool:IsA("Tool") then
+				local entry = meta[tool.Name]
+				local sword = type(entry) == "table" and entry.sword or nil
+				if type(sword) == "table" then
+					local damage = tonumber(sword.damage) or tonumber(sword.attackDamage) or 1
+					if not best_damage or damage > best_damage then
+						best, best_damage = tool, damage
+					end
+				end
+			end
+		end
+	end
+
+	return best
+end
+
 -- a short report of what resolved, the diagnostics module prints this
 function bedwars.report()
 	local lines = {}
@@ -780,6 +839,11 @@ function bedwars.report()
 	if constants then
 		table.insert(lines, "raycast distance: " .. tostring(constants.RAYCAST_SWORD_CHARACTER_DISTANCE))
 	end
+
+	local held = bedwars.held_tool()
+	local sword = bedwars.best_sword()
+	table.insert(lines, "held: " .. (held and held.Name or "none")
+		.. ", best sword: " .. (sword and sword.Name or "none"))
 
 	return lines
 end
