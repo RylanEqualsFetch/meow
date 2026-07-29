@@ -433,7 +433,7 @@ local chest_esp = render:module{name = "chest esp", description = "chests throug
 chest_esp:toggle{name = "team chests", default = true}
 chest_esp:toggle{name = "highlight", default = true}
 chest_esp:slider{name = "max distance", min = 50, max = 1500, default = 600, suffix = " studs"}
-chest_esp:slider{name = "rescan", min = 1, max = 15, default = 3, suffix = " s"}
+chest_esp:slider{name = "rescan", min = 3, max = 30, default = 8, suffix = " s"}
 chest_esp:color{name = "color", default = Color3.fromRGB(255, 196, 108)}
 
 chest_esp.on_enable = function(self)
@@ -479,7 +479,8 @@ chest_esp.on_enable = function(self)
 					return
 				end
 				scanned = scanned + 1
-				if scanned % 2500 == 0 then
+				-- a bedwars map is enormous, yield often so the frame survives
+				if scanned % 400 == 0 then
 					task.wait()
 				end
 
@@ -657,7 +658,7 @@ objects:dropdown{
 	multi = true,
 }
 objects:slider{name = "max distance", min = 50, max = 1500, default = 450, suffix = " studs"}
-objects:slider{name = "rescan", min = 1, max = 15, default = 4, suffix = " s"}
+objects:slider{name = "rescan", min = 3, max = 30, default = 8, suffix = " s"}
 objects:color{name = "color", default = Color3.fromRGB(126, 217, 141)}
 
 objects.on_enable = function(self)
@@ -725,7 +726,8 @@ objects.on_enable = function(self)
 					return
 				end
 				scanned = scanned + 1
-				if scanned % 2500 == 0 then
+				-- a bedwars map is enormous, yield often so the frame survives
+				if scanned % 400 == 0 then
 					task.wait()
 				end
 				if (inst:IsA("BasePart") or inst:IsA("Model")) and matches(inst.Name) then

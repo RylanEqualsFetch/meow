@@ -85,11 +85,9 @@ function grid.create(gui, bin)
 		shown = shown + 1
 		build()
 		holder.Visible = true
+		-- set directly, tweening every line was a hundred and fifty tweens a drag
 		for _, line in ipairs(lines) do
-			line.BackgroundTransparency = 1
-		end
-		for _, line in ipairs(lines) do
-			tween(line, {BackgroundTransparency = 0.86}, 0.12)
+			line.BackgroundTransparency = 0.86
 		end
 	end
 
@@ -98,14 +96,9 @@ function grid.create(gui, bin)
 		if shown > 0 then
 			return
 		end
-		for _, line in ipairs(lines) do
-			tween(line, {BackgroundTransparency = 1}, 0.14)
+		if holder.Parent then
+			holder.Visible = false
 		end
-		task.delay(0.16, function()
-			if shown == 0 and holder.Parent then
-				holder.Visible = false
-			end
-		end)
 	end
 
 	function self:destroy()

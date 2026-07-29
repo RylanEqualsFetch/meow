@@ -246,15 +246,21 @@ function util.drag(frame, handle, bin, opts)
 		return false
 	end
 
-	local function place()
+	-- the move itself is free so it tracks the cursor exactly, the grid is only
+	-- applied once on release, which reads far smoother than snapping per frame
+	local function place(settle)
 		local mouse = user_input:GetMouseLocation()
 		local x = start_pos.X.Offset + (mouse.X - start_mouse.X)
 		local y = start_pos.Y.Offset + (mouse.Y - start_mouse.Y)
 
 		local snap = opts.snap
-		if snap and snap > 1 then
+		if settle and snap and snap > 1 then
 			x = math.floor(x / snap + 0.5) * snap
 			y = math.floor(y / snap + 0.5) * snap
+			util.tween(frame, {
+				Position = UDim2.new(start_pos.X.Scale, x, start_pos.Y.Scale, y),
+			}, 0.12)
+			return
 		end
 
 		frame.Position = UDim2.new(start_pos.X.Scale, x, start_pos.Y.Scale, y)
@@ -268,6 +274,7 @@ function util.drag(frame, handle, bin, opts)
 		armed = false
 
 		if dragging then
+			place(true)
 			dragging = false
 			if opts.on_end then
 				opts.on_end()

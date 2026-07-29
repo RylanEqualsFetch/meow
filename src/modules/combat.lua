@@ -244,20 +244,14 @@ local function has_line_of_sight(camera, part, character)
 	return hit.Instance:IsDescendantOf(character)
 end
 
--- candidates come from the entity list in bedwars and the player list elsewhere
+-- the player list is cheap and covers every case, the entity query is not, so
+-- it only runs on a timer as a fallback when the player list came up empty
+local candidate_cache = {list = {}, stamp = 0}
+
 local function aim_candidates()
+	local me = util.local_player()
 	local out = {}
 
-	if bedwars.ready() then
-		for _, found in ipairs(bedwars.entities_in_range(300)) do
-			table.insert(out, found.instance)
-		end
-		if #out > 0 then
-			return out
-		end
-	end
-
-	local me = util.local_player()
 	for _, player in ipairs(players:GetPlayers()) do
 		if player ~= me and util.alive(player) then
 			local character = util.character(player)
@@ -266,7 +260,26 @@ local function aim_candidates()
 			end
 		end
 	end
-	return out
+
+	if #out > 0 then
+		return out
+	end
+
+	local now = os.clock()
+	if now - candidate_cache.stamp < 0.25 then
+		return candidate_cache.list
+	end
+
+	local found = {}
+	if bedwars.ready() then
+		for _, entry in ipairs(bedwars.entities_in_range(300)) do
+			table.insert(found, entry.instance)
+		end
+	end
+
+	candidate_cache.list = found
+	candidate_cache.stamp = now
+	return found
 end
 
 aim.on_enable = function(self)

@@ -17,6 +17,9 @@ local cache = {}
 local misses = {}
 local retry_after = 2
 
+local entity_cache = {value = nil, stamp = 0}
+local search_module_raw
+
 local function fresh(name)
 	local hit = cache[name]
 	if hit ~= nil then
@@ -44,6 +47,7 @@ function bedwars.forget()
 	cache = {}
 	misses = {}
 	bedwars.placer_instance = nil
+	entity_cache = {value = nil, stamp = 0}
 end
 
 -- walks a path off an instance, every step guarded
@@ -75,7 +79,21 @@ local function require_instance(inst)
 	return nil
 end
 
-local function search_module(name)
+-- the raw search walks every loaded module or the whole of replicated storage,
+-- so it is only ever allowed to run once per name until the retry window passes
+local function search_module_cached(name)
+	local key = "search:" .. name
+	local hit = fresh(key)
+	if hit then
+		return hit
+	end
+	if not ready_to_retry(key) then
+		return nil
+	end
+	return remember(key, search_module_raw(name))
+end
+
+search_module_raw = function(name)
 	local fn = getloadedmodules
 	if type(fn) == "function" then
 		local ok, list = pcall(fn)
@@ -131,7 +149,7 @@ function bedwars.knit()
 		end
 	end
 
-	local fallback = search_module("KnitClient")
+	local fallback = search_module_cached("KnitClient")
 	if type(fallback) == "table" and type(fallback.Controllers) == "table" then
 		return remember("knit", fallback)
 	end
@@ -174,7 +192,7 @@ local function resolve_table(key, path, field, search_name)
 	local value = exported and exported[field]
 
 	if type(value) ~= "table" and search_name then
-		local searched = search_module(search_name)
+		local searched = search_module_cached(search_name)
 		value = searched and searched[field]
 	end
 
@@ -243,7 +261,7 @@ function bedwars.block_engine()
 	local value = exported and exported.ClientBlockEngine
 
 	if type(value) ~= "table" then
-		local searched = search_module("client-block-engine")
+		local searched = search_module_cached("client-block-engine")
 		value = searched and searched.ClientBlockEngine
 	end
 
@@ -323,22 +341,48 @@ function bedwars.hotbar_block()
 	return nil
 end
 
-function bedwars.local_entity()
-	local module = search_module("entity-util")
-	local entity_util = module
-	if module and type(module.getLocalPlayerEntity) ~= "function" and type(module.default) == "table" then
-		entity_util = module.default
+function bedwars.entity_util()
+	local hit = fresh("entity_util")
+	if hit then
+		return hit
 	end
-	if not entity_util or type(entity_util.getLocalPlayerEntity) ~= "function" then
+	if not ready_to_retry("entity_util") then
 		return nil
 	end
+
+	local module = search_module_cached("entity-util")
+	local value = module
+	if module and type(module.getLocalPlayerEntity) ~= "function" and type(module.default) == "table" then
+		value = module.default
+	end
+	if not value or type(value.getLocalPlayerEntity) ~= "function" then
+		return remember("entity_util", nil)
+	end
+	return remember("entity_util", value)
+end
+
+-- can_attack asks for this once per entity, so it is held for a frame
+function bedwars.local_entity()
+	local now = os.clock()
+	if entity_cache.value and now - entity_cache.stamp < 0.05 then
+		return entity_cache.value
+	end
+
+	local entity_util = bedwars.entity_util()
+	if not entity_util then
+		return nil
+	end
+
 	local ok, entity = pcall(function()
 		return entity_util:getLocalPlayerEntity()
 	end)
-	if ok then
-		return entity
+	if not ok then
+		return nil
 	end
-	return nil
+
+	entity_cache.value = entity
+	entity_cache.stamp = now
+	return entity
 end
 
 function bedwars.target_in_range(range, charge)
@@ -405,17 +449,25 @@ function bedwars.can_attack(entity)
 end
 
 function bedwars.world_util()
-	local module = search_module("game-world-util")
-	if not module then
+	local hit = fresh("world_util")
+	if hit then
+		return hit
+	end
+	if not ready_to_retry("world_util") then
 		return nil
 	end
+
+	local module = search_module_cached("game-world-util")
+	if not module then
+		return remember("world_util", nil)
+	end
 	if type(module.getEntitiesWithinBox) == "function" then
-		return module
+		return remember("world_util", module)
 	end
 	if type(module.default) == "table" and type(module.default.getEntitiesWithinBox) == "function" then
-		return module.default
+		return remember("world_util", module.default)
 	end
-	return nil
+	return remember("world_util", nil)
 end
 
 function bedwars.entities_in_range(range)

@@ -572,7 +572,10 @@ anim_player.on_enable = function(self)
 			end
 		end
 
-		if self:get("override all") then
+		-- the track sweep allocates, ten times a second is plenty to hold a pose
+		local now = os.clock()
+		if self:get("override all") and now - (self.last_sweep or 0) >= 0.1 then
+			self.last_sweep = now
 			local animator = animator_of(util.character())
 			if animator then
 				local ok, playing = pcall(function()
