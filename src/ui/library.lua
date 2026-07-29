@@ -6,6 +6,7 @@ local manager = meow.load("src/core/manager.lua")
 local state = meow.load("src/core/state.lua")
 local logo = meow.load("src/ui/logo.lua")
 local grid = meow.load("src/ui/grid.lua")
+local icons = meow.load("src/ui/icons.lua")
 
 local new = util.new
 local tween = util.tween
@@ -750,28 +751,15 @@ function library.create(gui, bin)
 			end
 		end
 
-		local bar = new("Frame", {
-			Parent = button,
-			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.new(0, 3, 0.5, 0),
-			Size = UDim2.fromOffset(3, 0),
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			ZIndex = 2,
-		}, {util.corner(2)})
-		theme.tint(bar, "BackgroundColor3")
+		-- only the name reacts now, no fill and no bar
+		local name_glow = util.stroke(theme.accent, 1, 1)
+		name_glow.Parent = name_label
+		theme.tint(name_glow, "Color")
 
 		local function render_state(enabled, instant)
 			local speed = instant and 0 or 0.16
-			tween(button, {BackgroundColor3 = enabled and theme.accent_dark or theme.surface}, speed)
-			tween(name_label, {
-				TextColor3 = enabled and theme.text or theme.text_soft,
-				Position = UDim2.fromOffset(enabled and 15 or 11, 0),
-			}, speed)
-			tween(bar, {
-				Size = UDim2.fromOffset(3, enabled and 15 or 0),
-				BackgroundTransparency = enabled and 0 or 1,
-			}, speed, Enum.EasingStyle.Back)
+			tween(name_label, {TextColor3 = enabled and theme.accent or theme.text_soft}, speed)
+			tween(name_glow, {Transparency = enabled and 0.55 or 1}, speed)
 		end
 
 		render_state(mod.enabled, true)
@@ -828,17 +816,13 @@ function library.create(gui, bin)
 		bin:add(button.MouseEnter:Connect(function()
 			hovered = true
 			render_key()
-			if not mod.enabled then
-				tween(button, {BackgroundColor3 = theme.surface_hover}, 0.12)
-			end
+			tween(button, {BackgroundColor3 = theme.surface_hover}, 0.12)
 		end))
 
 		bin:add(button.MouseLeave:Connect(function()
 			hovered = false
 			render_key()
-			if not mod.enabled then
-				tween(button, {BackgroundColor3 = theme.surface}, 0.12)
-			end
+			tween(button, {BackgroundColor3 = theme.surface}, 0.12)
 		end))
 
 		bin:add(manager.toggled:connect(function(changed, enabled)
@@ -896,7 +880,19 @@ function library.create(gui, bin)
 		}, {util.corner(2)})
 		theme.tint(accent_dot, "BackgroundColor3")
 
-		label(header, {
+		local header_icon = new("ImageLabel", {
+			Parent = header,
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 21, 0.5, 0),
+			Size = UDim2.fromOffset(15, 15),
+			BackgroundTransparency = 1,
+			ImageTransparency = 1,
+			Visible = false,
+			ScaleType = Enum.ScaleType.Fit,
+		})
+		theme.tint(header_icon, "ImageColor3")
+
+		local header_label = label(header, {
 			BackgroundTransparency = 1,
 			Position = UDim2.fromOffset(23, 0),
 			Size = UDim2.new(1, -60, 1, 0),
@@ -905,6 +901,16 @@ function library.create(gui, bin)
 			TextColor3 = theme.text,
 			TextXAlignment = Enum.TextXAlignment.Left,
 		}, "semibold")
+
+		task.spawn(function()
+			local asset = icons.fetch(category.name)
+			if asset and header_icon.Parent then
+				header_icon.Image = asset
+				header_icon.Visible = true
+				tween(header_icon, {ImageTransparency = 0}, 0.2)
+				tween(header_label, {Position = UDim2.fromOffset(42, 0)}, 0.2)
+			end
+		end)
 
 		local count = label(header, {
 			BackgroundTransparency = 1,
@@ -1101,7 +1107,7 @@ function library.create(gui, bin)
 		return holder
 	end
 
-	local function nav_row(parent, text, order)
+	local function nav_row(parent, text, order, icon_name)
 		local button = new("TextButton", {
 			Parent = parent,
 			Size = UDim2.new(1, 0, 0, 32),
@@ -1113,6 +1119,18 @@ function library.create(gui, bin)
 			LayoutOrder = order,
 		}, {util.corner(theme.round.item)})
 
+		local icon = new("ImageLabel", {
+			Parent = button,
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 10, 0.5, 0),
+			Size = UDim2.fromOffset(16, 16),
+			BackgroundTransparency = 1,
+			ImageTransparency = 1,
+			Visible = false,
+			ScaleType = Enum.ScaleType.Fit,
+		})
+		theme.tint(icon, "ImageColor3")
+
 		local text_label = label(button, {
 			BackgroundTransparency = 1,
 			Position = UDim2.fromOffset(11, 0),
@@ -1122,6 +1140,19 @@ function library.create(gui, bin)
 			TextColor3 = theme.text_dim,
 			TextXAlignment = Enum.TextXAlignment.Left,
 		}, "medium")
+
+		-- the label slides over only once an icon actually resolves
+		if icon_name then
+			task.spawn(function()
+				local asset = icons.fetch(icon_name)
+				if asset and icon.Parent then
+					icon.Image = asset
+					icon.Visible = true
+					tween(icon, {ImageTransparency = 0}, 0.2)
+					tween(text_label, {Position = UDim2.fromOffset(34, 0)}, 0.2)
+				end
+			end)
+		end
 
 		local mark_label = label(button, {
 			BackgroundTransparency = 1,
@@ -1141,7 +1172,7 @@ function library.create(gui, bin)
 
 	for index, category in ipairs(manager.category_order) do
 		local column = self.columns[category.name]
-		local button, text_label, mark_label = nav_row(categories_section, category.name, index)
+		local button, text_label, mark_label = nav_row(categories_section, category.name, index, category.name)
 
 		local function render()
 			local open = column:is_open()
@@ -1161,14 +1192,14 @@ function library.create(gui, bin)
 		end))
 
 		bin:add(button.MouseEnter:Connect(function()
-			tween(text_label, {Position = UDim2.fromOffset(14, 0)}, 0.12)
+			tween(text_label, {Position = UDim2.fromOffset(text_label.Position.X.Offset + 3, 0)}, 0.12)
 			if not column:is_open() then
 				tween(button, {BackgroundTransparency = 0.6}, 0.12)
 			end
 		end))
 
 		bin:add(button.MouseLeave:Connect(function()
-			tween(text_label, {Position = UDim2.fromOffset(11, 0)}, 0.12)
+			tween(text_label, {Position = UDim2.fromOffset(icon.Visible and 34 or 11, 0)}, 0.12)
 			render()
 		end))
 	end

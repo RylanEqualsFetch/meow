@@ -116,16 +116,24 @@ end))
 boot:set(0.84, "restoring config")
 task.wait(0.1)
 
--- defaults first, then the saved config wins
-for _, mod in ipairs(manager.module_order) do
-	if mod.default_on then
-		mod:set_enabled(true, true)
+-- defaults first, then the saved config wins.
+-- restoring runs off the boot thread on purpose. enabling a saved module calls
+-- its on_enable, and some of those yield, the texture pack and animation player
+-- both wait on game:GetObjects, so doing this inline left the splash parked on
+-- this stage forever whenever one of them was slow or never returned
+task.spawn(function()
+	for _, mod in ipairs(manager.module_order) do
+		if mod.default_on then
+			pcall(function()
+				mod:set_enabled(true, true)
+			end)
+		end
 	end
-end
 
-if saved then
-	config.apply_modules(saved)
-end
+	if saved then
+		pcall(config.apply_modules, saved)
+	end
+end)
 
 config.watch(bin)
 manager.start(bin)
@@ -166,6 +174,14 @@ function meow.unload()
 end
 
 boot:set(1, "ready")
+
+-- a watchdog as well, nothing after this point may keep the splash on screen
+task.delay(4, function()
+	pcall(function()
+		boot:finish()
+	end)
+end)
+
 task.wait(0.24)
 boot:finish()
 
