@@ -20,8 +20,13 @@ local column_width = 222
 local column_gap = 10
 local column_max_body = 430
 
+-- shared between every draggable panel, tracks whether the current press turned
+-- into a drag and which child rects must never start one
+local drag_guard = {moved = false, zones = {}}
+
 -- normalized drag inside a frame, alpha is clamped 0 to 1 on both axes
 local function bind_drag(frame, bin, callback)
+	table.insert(drag_guard.zones, frame)
 	local dragging = false
 
 	local function update(position)
@@ -521,9 +526,12 @@ function library.create(gui, bin)
 
 	local snap_grid = grid.create(gui, bin)
 
-	-- every panel drags on the same grid and snaps to it
+	-- every panel drags on the same grid and snaps to it. the threshold lets a
+	-- press on a module row still be a click when the mouse does not move
 	local drag_opts = {
 		snap = grid.spacing,
+		threshold = 5,
+		state = drag_guard,
 		on_start = function()
 			snap_grid:show()
 		end,
@@ -607,11 +615,11 @@ function library.create(gui, bin)
 			Position = UDim2.fromOffset(11, 0),
 			Size = UDim2.new(1, -58, 1, 0),
 			Text = mod.name,
-			TextSize = theme.size.body,
-			TextColor3 = theme.text_dim,
+			TextSize = theme.size.body + 1,
+			TextColor3 = theme.text_soft,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextTruncate = Enum.TextTruncate.AtEnd,
-		}, "medium")
+		}, "semibold")
 
 		-- a keycap chip, it only shows once bound or while the row is hovered
 		local key_chip = new("TextButton", {
@@ -691,18 +699,43 @@ function library.create(gui, bin)
 			end
 		end
 
-		local function render_state(enabled)
-			tween(button, {BackgroundColor3 = enabled and theme.accent_dark or theme.surface}, 0.14)
-			tween(name_label, {TextColor3 = enabled and theme.text or theme.text_dim}, 0.14)
+		local bar = new("Frame", {
+			Parent = button,
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 3, 0.5, 0),
+			Size = UDim2.fromOffset(3, 0),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ZIndex = 2,
+		}, {util.corner(2)})
+		theme.tint(bar, "BackgroundColor3")
+
+		local function render_state(enabled, instant)
+			local speed = instant and 0 or 0.16
+			tween(button, {BackgroundColor3 = enabled and theme.accent_dark or theme.surface}, speed)
+			tween(name_label, {
+				TextColor3 = enabled and theme.text or theme.text_soft,
+				Position = UDim2.fromOffset(enabled and 15 or 11, 0),
+			}, speed)
+			tween(bar, {
+				Size = UDim2.fromOffset(3, enabled and 15 or 0),
+				BackgroundTransparency = enabled and 0 or 1,
+			}, speed, Enum.EasingStyle.Back)
 		end
 
-		render_state(mod.enabled)
+		render_state(mod.enabled, true)
 
 		bin:add(button.MouseButton1Click:Connect(function()
+			if drag_guard.moved then
+				return
+			end
 			mod:toggle_state()
 		end))
 
 		bin:add(key_chip.MouseButton1Click:Connect(function()
+			if drag_guard.moved then
+				return
+			end
 			binding = true
 			render_key()
 			start_capture(mod, function()
@@ -713,9 +746,31 @@ function library.create(gui, bin)
 
 		-- inputbegan rather than mousebutton2click, the click event does not
 		-- always survive a game that binds the right mouse button itself
+		local function set_options(open)
+			if not options_frame then
+				return
+			end
+			if open then
+				options_frame.Visible = true
+				options_frame.BackgroundTransparency = 1
+				options_frame.Position = UDim2.fromOffset(0, -6)
+				tween(options_frame, {
+					BackgroundTransparency = 0,
+					Position = UDim2.fromOffset(0, 0),
+				}, 0.18, Enum.EasingStyle.Quint)
+			else
+				tween(options_frame, {BackgroundTransparency = 1}, 0.12)
+				task.delay(0.12, function()
+					if options_frame and options_frame.Parent then
+						options_frame.Visible = false
+					end
+				end)
+			end
+		end
+
 		bin:add(button.InputBegan:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton2 and options_frame then
-				options_frame.Visible = not options_frame.Visible
+				set_options(not options_frame.Visible)
 			end
 		end))
 
@@ -863,14 +918,35 @@ function library.create(gui, bin)
 		resize()
 		bin:add(layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize))
 
-		util.drag(frame, header, bin, drag_opts)
+		util.drag(frame, frame, bin, drag_opts)
 
 		local column = {frame = frame, category = category.name}
 
 		function column:set_open(open)
-			frame.Visible = open and true or false
+			open = open and true or false
+
+			if open then
+				frame.Visible = true
+				frame.BackgroundTransparency = 1
+				local target = frame.Position
+				frame.Position = UDim2.new(
+					target.X.Scale,
+					target.X.Offset,
+					target.Y.Scale,
+					target.Y.Offset + 10
+				)
+				tween(frame, {BackgroundTransparency = 0.05, Position = target}, 0.2, Enum.EasingStyle.Quint)
+			else
+				tween(frame, {BackgroundTransparency = 1}, 0.12)
+				task.delay(0.12, function()
+					if frame.Parent and frame.BackgroundTransparency > 0.9 then
+						frame.Visible = false
+					end
+				end)
+			end
+
 			state.columns[category.name] = state.columns[category.name] or {}
-			state.columns[category.name].open = frame.Visible
+			state.columns[category.name].open = open
 		end
 
 		function column:is_open()
@@ -947,7 +1023,7 @@ function library.create(gui, bin)
 		TextXAlignment = Enum.TextXAlignment.Right,
 	}, "regular")
 
-	util.drag(nav, nav_header, bin, drag_opts)
+	util.drag(nav, nav, bin, drag_opts)
 
 	local function section(title, order)
 		local holder = new("Frame", {
@@ -1034,12 +1110,14 @@ function library.create(gui, bin)
 		end))
 
 		bin:add(button.MouseEnter:Connect(function()
+			tween(text_label, {Position = UDim2.fromOffset(14, 0)}, 0.12)
 			if not column:is_open() then
 				tween(button, {BackgroundTransparency = 0.6}, 0.12)
 			end
 		end))
 
 		bin:add(button.MouseLeave:Connect(function()
+			tween(text_label, {Position = UDim2.fromOffset(11, 0)}, 0.12)
 			render()
 		end))
 	end

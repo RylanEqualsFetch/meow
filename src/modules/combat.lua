@@ -12,15 +12,15 @@ local user_input = util.services.UserInputService
 
 local combat = manager.category("combat")
 
-local block_studs = 3
+-- declared up front because the kill aura tick reads the reach range
+local reach
 
 -- kill aura
 
 local aura = combat:module{name = "kill aura", description = "swings at everything in range"}
-aura:slider{name = "range", min = 8, max = 30, default = 16, decimals = 1, suffix = " studs"}
+aura:dropdown{name = "mode", values = {"legit", "rage"}, default = "legit"}
 aura:slider{name = "swings", min = 1, max = 20, default = 12, suffix = " cps"}
-aura:slider{name = "targets", min = 1, max = 6, default = 2}
-aura:toggle{name = "use game targeting", default = true}
+aura:slider{name = "targets", min = 1, max = 6, default = 3}
 aura:toggle{name = "hold weapon only", default = true}
 
 aura.on_enable = function(self)
@@ -41,12 +41,12 @@ aura.on_tick = function(self)
 		return
 	end
 
-	local range = self:get("range")
+	-- reach raises the range the client will accept, so use it when it is on
+	local range = reach.range_studs() or bedwars.attack_range()
 	local swung = false
 
-	if self:get("use game targeting") then
-		-- getTargetInRegion applies the games own team, sight and match checks,
-		-- the range is the only thing we supply
+	if self:get("mode") == "legit" then
+		-- one target, picked by the games own team, sight and match checks
 		local target = bedwars.target_in_range(range)
 		if target then
 			swung = bedwars.attack(target)
@@ -68,32 +68,43 @@ aura.on_tick = function(self)
 	end
 end
 
--- reach, feeds the aura range
+-- reach
+-- attackEntity refuses anything past attackRange plus two studs, so the range
+-- has to be raised on the weapon meta clone the client builds before each swing.
+-- the games own dagger effect pushes that same field to 6.5 blocks
 
-local reach = combat:module{name = "reach", description = "extends how far a swing lands"}
-reach:slider{name = "studs", min = 0, max = 9, default = 4, decimals = 1}
-reach:toggle{name = "apply to kill aura", default = true}
+reach = combat:module{name = "reach", description = "raises the swing range on the weapon"}
+reach:slider{name = "blocks", min = 4.2, max = 6.5, default = 6, decimals = 1}
 
 reach.on_enable = function(self)
-	if not bedwars.ready() then
-		notify.push("reach needs the bedwars sword controller")
-		error("sword controller not found")
+	if not bedwars.sync_events() then
+		notify.push("reach needs the bedwars sync events")
+		error("client sync events not found")
 	end
+
+	local handle = bedwars.hook_sword_meta(function(meta)
+		local sword = meta.sword
+		if type(sword) ~= "table" then
+			return
+		end
+		sword.attackRange = self:get("blocks") * bedwars.block_studs
+	end)
+
+	if not handle then
+		notify.push("reach could not hook the swing event")
+		error("hook failed")
+	end
+
+	self.bin:add(function()
+		bedwars.release_hook(handle)
+	end)
 end
 
-reach.on_tick = function(self)
-	if not self:get("apply to kill aura") or not aura.enabled then
-		return
+function reach.range_studs()
+	if reach.enabled then
+		return reach:get("blocks") * bedwars.block_studs
 	end
-	local aura_range = aura.options["range"]
-	if not aura_range then
-		return
-	end
-	-- the base sword region in this game is 3.8 blocks
-	local wanted = math.min(3.8 * block_studs + self:get("studs"), aura_range.max)
-	if math.abs(aura_range.value - wanted) > 0.05 then
-		aura_range:set(wanted, true)
-	end
+	return nil
 end
 
 -- trigger bot
@@ -101,6 +112,7 @@ end
 local trigger = combat:module{name = "trigger bot", description = "swings when a target is under the crosshair"}
 trigger:slider{name = "delay", min = 0, max = 400, default = 60, suffix = " ms"}
 trigger:slider{name = "range", min = 5, max = 30, default = 16, suffix = " studs"}
+trigger:toggle{name = "use reach range", default = true}
 trigger:toggle{name = "hold weapon only", default = true}
 
 trigger.on_enable = function(self)
@@ -132,11 +144,12 @@ trigger.on_tick = function(self)
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = {character, camera}
 
-	local hit = workspace:Raycast(
-		camera.CFrame.Position,
-		camera.CFrame.LookVector * self:get("range"),
-		params
-	)
+	local range = self:get("range")
+	if self:get("use reach range") then
+		range = reach.range_studs() or range
+	end
+
+	local hit = workspace:Raycast(camera.CFrame.Position, camera.CFrame.LookVector * range, params)
 	if not hit or not hit.Instance then
 		return
 	end
@@ -148,7 +161,7 @@ trigger.on_tick = function(self)
 
 	if self.native then
 		-- the swing itself goes through the games controller
-		local target = bedwars.target_in_range(self:get("range"))
+		local target = bedwars.target_in_range(range)
 		if target and bedwars.entity_instance(target) == model then
 			if bedwars.attack(target) then
 				self.next_swing = now + self:get("delay") / 1000
@@ -169,48 +182,13 @@ trigger.on_tick = function(self)
 	self.next_swing = now + self:get("delay") / 1000
 end
 
--- auto swing, plain swinging without target selection
-
-local auto_swing = combat:module{name = "auto swing", description = "swings the held weapon on a timer"}
-auto_swing:slider{name = "cps", min = 1, max = 20, default = 11}
-auto_swing:toggle{name = "hold left mouse", default = true}
-
-auto_swing.on_enable = function(self)
-	if not bedwars.ready() then
-		notify.push("auto swing needs the bedwars sword controller")
-		error("sword controller not found")
-	end
-	self.next_swing = 0
-end
-
-auto_swing.on_tick = function(self)
-	local now = os.clock()
-	if now < (self.next_swing or 0) then
-		return
-	end
-	if self:get("hold left mouse")
-		and not user_input:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-		return
-	end
-
-	local sword = bedwars.sword()
-	if not sword then
-		return
-	end
-
-	pcall(function()
-		sword:swingSwordInRegion()
-	end)
-	self.next_swing = now + 1 / math.max(self:get("cps"), 1)
-end
-
 -- aim assist
 
 local aim = combat:module{name = "aim assist", description = "smooth camera pull toward a target"}
 aim:slider{name = "fov", min = 20, max = 400, default = 110, suffix = " px"}
 aim:slider{name = "smoothness", min = 1, max = 25, default = 9}
 aim:dropdown{name = "target part", values = {"head", "torso", "root"}, default = "head"}
-aim:toggle{name = "hold right mouse", default = true}
+aim:dropdown{name = "activate", values = {"always", "right mouse", "left mouse"}, default = "always"}
 aim:toggle{name = "visible check", default = true}
 aim:toggle{name = "team check", default = true}
 
@@ -270,8 +248,13 @@ aim.on_enable = function(self)
 			return
 		end
 
-		if self:get("hold right mouse")
+		local activate = self:get("activate")
+		if activate == "right mouse"
 			and not user_input:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+			return
+		end
+		if activate == "left mouse"
+			and not user_input:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
 			return
 		end
 
@@ -310,65 +293,6 @@ aim.on_enable = function(self)
 		local goal = CFrame.new(camera.CFrame.Position, best.Position)
 		camera.CFrame = camera.CFrame:Lerp(goal, 1 / math.max(self:get("smoothness"), 1))
 	end, self.bin)
-end
-
--- hitbox expander, only useful where the client owns hit detection
-
-local hitbox = combat:module{
-	name = "hitbox",
-	description = "grows enemy root parts, no effect where the server checks hits",
-}
-hitbox:slider{name = "size", min = 2, max = 12, default = 5, decimals = 1}
-hitbox:slider{name = "transparency", min = 0, max = 1, default = 0.8, decimals = 2}
-hitbox:toggle{name = "team check", default = true}
-
-hitbox.on_enable = function(self)
-	if bedwars.ready() then
-		notify.push("bedwars checks hits server side, use kill aura and reach")
-	end
-	self.saved = {}
-	self.bin:add(function()
-		for part, data in pairs(self.saved) do
-			if part and part.Parent then
-				pcall(function()
-					part.Size = data.size
-					part.Transparency = data.transparency
-					part.CanCollide = data.collide
-					part.Massless = data.massless
-				end)
-			end
-		end
-		self.saved = nil
-	end)
-end
-
-hitbox.on_tick = function(self)
-	local me = util.local_player()
-	local size = self:get("size")
-	local transparency = self:get("transparency")
-	local team_check = self:get("team check")
-
-	for _, player in ipairs(players:GetPlayers()) do
-		if player ~= me and util.alive(player) then
-			if not (team_check and util.same_team(player)) then
-				local root = util.root(player)
-				if root then
-					if not self.saved[root] then
-						self.saved[root] = {
-							size = root.Size,
-							transparency = root.Transparency,
-							collide = root.CanCollide,
-							massless = root.Massless,
-						}
-					end
-					root.Size = Vector3.new(size, size, size)
-					root.Transparency = transparency
-					root.CanCollide = false
-					root.Massless = true
-				end
-			end
-		end
-	end
 end
 
 return true

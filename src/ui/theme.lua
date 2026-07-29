@@ -7,6 +7,7 @@ local theme = {
 	surface_hover = Color3.fromRGB(37, 37, 47),
 	outline = Color3.fromRGB(41, 41, 54),
 	text = Color3.fromRGB(240, 240, 247),
+	text_soft = Color3.fromRGB(182, 182, 198),
 	text_dim = Color3.fromRGB(138, 138, 156),
 	text_faint = Color3.fromRGB(92, 92, 110),
 	good = Color3.fromRGB(126, 217, 141),

@@ -5,6 +5,7 @@ local manager = meow.load("src/core/manager.lua")
 local notify = meow.load("src/ui/notify.lua")
 
 local state = meow.load("src/core/state.lua")
+local bedwars = meow.load("src/game/bedwars.lua")
 
 local players = util.services.Players
 local user_input = util.services.UserInputService
@@ -31,16 +32,20 @@ end
 
 -- auto clicker
 
-local auto_clicker = utility:module{name = "auto clicker", description = "clicks while the mouse is held"}
+local auto_clicker = utility:module{name = "auto clicker", description = "swings while the mouse is held"}
 -- anything past twenty clicks a second reads as automated, cap it there
 auto_clicker:slider{name = "cps", min = 1, max = 20, default = 12}
 auto_clicker:toggle{name = "hold only", default = true}
 
 auto_clicker.on_enable = function(self)
-	local click = mouse1click or (Input and Input.LeftClick)
-	if type(click) ~= "function" then
-		notify.push("auto clicker needs an executor with mouse1click")
-		error("no mouse click function")
+	-- in bedwars a synthetic click never reaches the sword, the swing has to go
+	-- through the controller the game binds the mouse to
+	local native = bedwars.ready()
+	local click = mouse1click
+
+	if not native and type(click) ~= "function" then
+		notify.push("auto clicker needs bedwars or an executor with mouse1click")
+		error("no click path")
 	end
 
 	local held = false
@@ -62,8 +67,18 @@ auto_clicker.on_enable = function(self)
 
 	task.spawn(function()
 		while running do
-			if not self:get("hold only") or held then
-				pcall(click)
+			local down = held or user_input:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+			if not self:get("hold only") or down then
+				if native then
+					local sword = bedwars.sword()
+					if sword then
+						pcall(function()
+							sword:swingSwordInRegion()
+						end)
+					end
+				else
+					pcall(click)
+				end
 			end
 			task.wait(1 / math.max(self:get("cps"), 1))
 		end

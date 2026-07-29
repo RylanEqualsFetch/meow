@@ -183,13 +183,27 @@ function util.signal()
 	return self
 end
 
--- opts: {snap = pixels, on_start = fn, on_end = fn}
--- the press is caught both on the handle and globally with a rect test, because
--- gui input routing can swallow the handle event, and the move is driven from
--- renderstepped against the live mouse so it never depends on inputchanged
+local function visible_chain(inst)
+	local node = inst
+	while node and node:IsA("GuiObject") do
+		if not node.Visible then
+			return false
+		end
+		node = node.Parent
+	end
+	return true
+end
+
+-- opts: {snap, threshold, on_start, on_end, state = {moved, zones}}
+-- a press anywhere on the panel arms a drag, it only becomes one once the mouse
+-- has moved past the threshold, so the same press can still be a click. zones
+-- are child rects, sliders and pickers, that must never start a drag
 function util.drag(frame, handle, bin, opts)
 	handle = handle or frame
 	opts = opts or {}
+
+	local shared = opts.state or {}
+	shared.zones = shared.zones or {}
 
 	pcall(function()
 		handle.Active = true
@@ -197,12 +211,14 @@ function util.drag(frame, handle, bin, opts)
 
 	local run_service = util.services.RunService
 	local gui_service = util.services.GuiService
+	local threshold = opts.threshold or 4
 
+	local armed = false
 	local dragging = false
-	local move_connection
+	local loop
 	local start_mouse, start_pos
 
-	local function inset()
+	local function offset()
 		local ok, top = pcall(function()
 			return gui_service:GetGuiInset()
 		end)
@@ -212,16 +228,22 @@ function util.drag(frame, handle, bin, opts)
 		return Vector2.new(0, 0)
 	end
 
-	-- input positions sit below the top bar, absolute positions do not
-	local function inside(position)
-		local offset = inset()
-		local point = Vector2.new(position.X + offset.X, position.Y + offset.Y)
-		local origin = handle.AbsolutePosition
-		local size = handle.AbsoluteSize
+	local function inside(rect, point)
+		local origin = rect.AbsolutePosition
+		local size = rect.AbsoluteSize
 		return point.X >= origin.X
 			and point.X <= origin.X + size.X
 			and point.Y >= origin.Y
 			and point.Y <= origin.Y + size.Y
+	end
+
+	local function blocked(point)
+		for _, zone in ipairs(shared.zones) do
+			if zone and zone.Parent and visible_chain(zone) and inside(zone, point) then
+				return true
+			end
+		end
+		return false
 	end
 
 	local function place()
@@ -238,40 +260,61 @@ function util.drag(frame, handle, bin, opts)
 		frame.Position = UDim2.new(start_pos.X.Scale, x, start_pos.Y.Scale, y)
 	end
 
-	local function begin()
+	local function release()
+		if loop then
+			loop:Disconnect()
+			loop = nil
+		end
+		armed = false
+
 		if dragging then
+			dragging = false
+			if opts.on_end then
+				opts.on_end()
+			end
+			-- the click event lands after the release, so hold the flag a moment
+			task.delay(0.06, function()
+				shared.moved = false
+			end)
+		else
+			shared.moved = false
+		end
+	end
+
+	local function arm()
+		if armed or dragging then
 			return
 		end
-		dragging = true
+		armed = true
+		shared.moved = false
 		start_mouse = user_input:GetMouseLocation()
 		start_pos = frame.Position
 
-		if opts.on_start then
-			opts.on_start()
+		if loop then
+			loop:Disconnect()
 		end
-
-		if move_connection then
-			move_connection:Disconnect()
-		end
-		move_connection = run_service.RenderStepped:Connect(function()
-			if dragging then
-				place()
+		loop = run_service.RenderStepped:Connect(function()
+			if not armed and not dragging then
+				return
 			end
-		end)
-	end
 
-	local function stop()
-		if not dragging then
-			return
-		end
-		dragging = false
-		if move_connection then
-			move_connection:Disconnect()
-			move_connection = nil
-		end
-		if opts.on_end then
-			opts.on_end()
-		end
+			local mouse = user_input:GetMouseLocation()
+
+			if not dragging then
+				local dx = mouse.X - start_mouse.X
+				local dy = mouse.Y - start_mouse.Y
+				if math.sqrt(dx * dx + dy * dy) < threshold then
+					return
+				end
+				dragging = true
+				shared.moved = true
+				if opts.on_start then
+					opts.on_start()
+				end
+			end
+
+			place()
+		end)
 	end
 
 	local function is_press(input)
@@ -279,31 +322,29 @@ function util.drag(frame, handle, bin, opts)
 			or input.UserInputType == Enum.UserInputType.Touch
 	end
 
-	bin:add(handle.InputBegan:Connect(function(input)
-		if is_press(input) then
-			begin()
-		end
-	end))
-
 	bin:add(user_input.InputBegan:Connect(function(input)
 		if not is_press(input) then
 			return
 		end
-		if not frame.Visible or not handle.Visible then
+		if not frame.Visible or not visible_chain(handle) then
 			return
 		end
-		if inside(input.Position) then
-			begin()
+
+		local point = input.Position + offset()
+		if not inside(handle, point) or blocked(point) then
+			return
 		end
+		arm()
 	end))
 
 	bin:add(user_input.InputEnded:Connect(function(input)
 		if is_press(input) then
-			stop()
+			release()
 		end
 	end))
 
-	bin:add(stop)
+	bin:add(release)
+	return shared
 end
 
 -- camera writes have to land after the game moves the camera each frame

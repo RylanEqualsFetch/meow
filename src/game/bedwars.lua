@@ -264,6 +264,81 @@ function bedwars.entities_in_range(range)
 	return out
 end
 
+-- the client fires BeforeSwordSwing with a mutable weapon meta clone before every
+-- swing, and attackEntity then refuses any target past attackRange plus two
+-- studs. raising the range on that clone is exactly how the games own dagger
+-- effect extends reach, so reach rides the same hook
+function bedwars.sync_events()
+	local module = require_module("client-sync-events")
+	if not module then
+		return nil
+	end
+	if type(module.BeforeSwordSwing) == "table" then
+		return module
+	end
+	if type(module.default) == "table" and type(module.default.BeforeSwordSwing) == "table" then
+		return module.default
+	end
+	return nil
+end
+
+bedwars.block_studs = 3
+
+function bedwars.hook_sword_meta(fn)
+	local events = bedwars.sync_events()
+	if not events then
+		return nil
+	end
+
+	local ok, handle = pcall(function()
+		return events.BeforeSwordSwing:connect(function(name, payload)
+			if type(payload) == "table" and type(payload.weaponMetaClone) == "table" then
+				pcall(fn, payload.weaponMetaClone, name, payload)
+			end
+		end)
+	end)
+
+	if not ok then
+		return nil
+	end
+	return handle
+end
+
+function bedwars.release_hook(handle)
+	if handle == nil then
+		return
+	end
+	pcall(function()
+		if type(handle) == "function" then
+			handle()
+		elseif type(handle) == "table" then
+			if type(handle.disconnect) == "function" then
+				handle:disconnect()
+			elseif type(handle.Disconnect) == "function" then
+				handle:Disconnect()
+			elseif type(handle.destroy) == "function" then
+				handle:destroy()
+			end
+		end
+	end)
+end
+
+-- the sword region the client is currently willing to swing at
+function bedwars.attack_range()
+	local sword = bedwars.sword()
+	if not sword then
+		return 12.6
+	end
+	local ok, item = pcall(function()
+		return sword:getHandItem()
+	end)
+	if not ok or type(item) ~= "table" then
+		return 12.6
+	end
+	-- 4.2 blocks is the games own region constant when a sword has no range set
+	return 4.2 * bedwars.block_studs
+end
+
 -- beds carry a collection service tag in this game, which beats name matching
 function bedwars.beds()
 	local ok, tagged = pcall(function()

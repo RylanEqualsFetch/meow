@@ -491,12 +491,10 @@ chest_esp.on_enable = function(self)
 						if not entry then
 							entry = {}
 							tracked[inst] = entry
-							local color = self:get("color")
+							-- highlight only, the floating text was noise
 							if self:get("highlight") then
-								entry.highlight = through_wall_highlight(inst, host, color)
+								entry.highlight = through_wall_highlight(inst, host, self:get("color"))
 							end
-							entry.billboard, entry.label =
-								through_wall_label(part, host, "chest", color, self:get("max distance"))
 						end
 					end
 				end
