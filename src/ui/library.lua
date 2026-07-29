@@ -544,33 +544,41 @@ function library.create(gui, bin)
 	-- keybind capture, one listener at a time
 	local capturing
 
-	local function start_capture(mod, chip, render_key)
+	local function start_capture(mod, finish)
 		if capturing then
 			capturing()
 		end
 
-		chip.Text = "[...]"
-		chip.TextColor3 = theme.accent
-
 		local connection
 		connection = user_input.InputBegan:Connect(function(input, processed)
-			if processed or input.UserInputType ~= Enum.UserInputType.Keyboard then
+			if input.UserInputType ~= Enum.UserInputType.Keyboard then
 				return
 			end
+
+			local key = input.KeyCode
+			local clearing = key == Enum.KeyCode.Escape or key == Enum.KeyCode.Backspace
+
+			-- roblox marks escape as processed because it opens its own menu,
+			-- so a clear has to be let through anyway
+			if processed and not clearing then
+				return
+			end
+
 			connection:Disconnect()
 			capturing = nil
-			if input.KeyCode == Enum.KeyCode.Escape or input.KeyCode == Enum.KeyCode.Backspace then
+
+			if clearing then
 				mod:set_key(nil)
 			else
-				mod:set_key(input.KeyCode)
+				mod:set_key(key)
 			end
-			render_key()
+			finish()
 		end)
 
 		capturing = function()
 			connection:Disconnect()
 			capturing = nil
-			render_key()
+			finish()
 		end
 	end
 
@@ -605,38 +613,83 @@ function library.create(gui, bin)
 			TextTruncate = Enum.TextTruncate.AtEnd,
 		}, "medium")
 
-		-- a bracket chip you click to bind, right click the row opens the options
+		-- a keycap chip, it only shows once bound or while the row is hovered
 		local key_chip = new("TextButton", {
 			Parent = button,
 			AnchorPoint = Vector2.new(1, 0.5),
 			Position = UDim2.new(1, -9, 0.5, 0),
-			Size = UDim2.fromOffset(34, 18),
+			Size = UDim2.fromOffset(30, 17),
 			BackgroundColor3 = theme.surface_light,
-			BackgroundTransparency = 0.35,
+			BackgroundTransparency = 0.25,
 			BorderSizePixel = 0,
-			Text = "[ ]",
+			Text = "",
 			TextSize = theme.size.tiny - 1,
-			TextColor3 = theme.text_faint,
+			TextColor3 = theme.text_dim,
 			AutoButtonColor = false,
-		}, {util.corner(theme.round.chip)})
+			Visible = mod.key ~= nil,
+		}, {
+			util.corner(theme.round.chip),
+			util.stroke(theme.outline, 1, 0.35),
+		})
 		theme.apply_font(key_chip, "semibold")
 
+		local hovered = false
+		local binding = false
+
 		local function render_key()
+			if binding then
+				key_chip.Visible = true
+				key_chip.Text = "press"
+				key_chip.TextColor3 = theme.accent
+				key_chip.Size = UDim2.fromOffset(42, 17)
+				return
+			end
+
 			if mod.key then
-				key_chip.Text = "[" .. util.key_name(mod.key) .. "]"
+				local text = util.key_name(mod.key)
+				key_chip.Visible = true
+				key_chip.Text = text
 				key_chip.TextColor3 = theme.text_dim
 				key_chip.Size = UDim2.fromOffset(
-					math.max(34, util.text_width(key_chip.Text, theme.size.tiny, Enum.Font.Gotham) + 14),
-					18
+					math.max(26, util.text_width(text, theme.size.tiny, Enum.Font.Gotham) + 14),
+					17
 				)
 			else
-				key_chip.Text = "[ ]"
+				key_chip.Visible = hovered
+				key_chip.Text = "bind"
 				key_chip.TextColor3 = theme.text_faint
-				key_chip.Size = UDim2.fromOffset(34, 18)
+				key_chip.Size = UDim2.fromOffset(34, 17)
 			end
 		end
 
 		render_key()
+
+		-- the options panel, opened with a right click on the row
+		local options_frame
+
+		if #mod.option_order > 0 then
+			options_frame = new("Frame", {
+				Parent = holder,
+				Size = UDim2.new(1, 0, 0, 0),
+				AutomaticSize = Enum.AutomaticSize.Y,
+				BackgroundColor3 = theme.background,
+				BorderSizePixel = 0,
+				Visible = false,
+				LayoutOrder = 2,
+			}, {
+				util.corner(theme.round.item),
+				util.stroke(theme.outline, 1, 0.4),
+				util.list(7),
+				util.padding(9, 10, 10, 10),
+			})
+
+			for _, option in ipairs(mod.option_order) do
+				local builder = controls[option.kind]
+				if builder then
+					builder(options_frame, option, bin)
+				end
+			end
+		end
 
 		local function render_state(enabled)
 			tween(button, {BackgroundColor3 = enabled and theme.accent_dark or theme.surface}, 0.14)
@@ -650,22 +703,33 @@ function library.create(gui, bin)
 		end))
 
 		bin:add(key_chip.MouseButton1Click:Connect(function()
-			start_capture(mod, key_chip, render_key)
+			binding = true
+			render_key()
+			start_capture(mod, function()
+				binding = false
+				render_key()
+			end)
 		end))
 
-		bin:add(button.MouseButton2Click:Connect(function()
-			if options_frame then
+		-- inputbegan rather than mousebutton2click, the click event does not
+		-- always survive a game that binds the right mouse button itself
+		bin:add(button.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton2 and options_frame then
 				options_frame.Visible = not options_frame.Visible
 			end
 		end))
 
 		bin:add(button.MouseEnter:Connect(function()
+			hovered = true
+			render_key()
 			if not mod.enabled then
 				tween(button, {BackgroundColor3 = theme.surface_hover}, 0.12)
 			end
 		end))
 
 		bin:add(button.MouseLeave:Connect(function()
+			hovered = false
+			render_key()
 			if not mod.enabled then
 				tween(button, {BackgroundColor3 = theme.surface}, 0.12)
 			end

@@ -184,29 +184,50 @@ function util.signal()
 end
 
 -- opts: {snap = pixels, on_start = fn, on_end = fn}
--- the move is driven from renderstepped against the live mouse location rather
--- than from inputchanged, which is what stopped drags from tracking before
+-- the press is caught both on the handle and globally with a rect test, because
+-- gui input routing can swallow the handle event, and the move is driven from
+-- renderstepped against the live mouse so it never depends on inputchanged
 function util.drag(frame, handle, bin, opts)
 	handle = handle or frame
 	opts = opts or {}
 
-	-- a plain frame never receives input unless it is active
 	pcall(function()
 		handle.Active = true
 	end)
 
 	local run_service = util.services.RunService
+	local gui_service = util.services.GuiService
+
 	local dragging = false
 	local move_connection
 	local start_mouse, start_pos
 
+	local function inset()
+		local ok, top = pcall(function()
+			return gui_service:GetGuiInset()
+		end)
+		if ok and typeof(top) == "Vector2" then
+			return top
+		end
+		return Vector2.new(0, 0)
+	end
+
+	-- input positions sit below the top bar, absolute positions do not
+	local function inside(position)
+		local offset = inset()
+		local point = Vector2.new(position.X + offset.X, position.Y + offset.Y)
+		local origin = handle.AbsolutePosition
+		local size = handle.AbsoluteSize
+		return point.X >= origin.X
+			and point.X <= origin.X + size.X
+			and point.Y >= origin.Y
+			and point.Y <= origin.Y + size.Y
+	end
+
 	local function place()
 		local mouse = user_input:GetMouseLocation()
-		local dx = mouse.X - start_mouse.X
-		local dy = mouse.Y - start_mouse.Y
-
-		local x = start_pos.X.Offset + dx
-		local y = start_pos.Y.Offset + dy
+		local x = start_pos.X.Offset + (mouse.X - start_mouse.X)
+		local y = start_pos.Y.Offset + (mouse.Y - start_mouse.Y)
 
 		local snap = opts.snap
 		if snap and snap > 1 then
@@ -215,6 +236,28 @@ function util.drag(frame, handle, bin, opts)
 		end
 
 		frame.Position = UDim2.new(start_pos.X.Scale, x, start_pos.Y.Scale, y)
+	end
+
+	local function begin()
+		if dragging then
+			return
+		end
+		dragging = true
+		start_mouse = user_input:GetMouseLocation()
+		start_pos = frame.Position
+
+		if opts.on_start then
+			opts.on_start()
+		end
+
+		if move_connection then
+			move_connection:Disconnect()
+		end
+		move_connection = run_service.RenderStepped:Connect(function()
+			if dragging then
+				place()
+			end
+		end)
 	end
 
 	local function stop()
@@ -231,34 +274,31 @@ function util.drag(frame, handle, bin, opts)
 		end
 	end
 
+	local function is_press(input)
+		return input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+	end
+
 	bin:add(handle.InputBegan:Connect(function(input)
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1
-			and input.UserInputType ~= Enum.UserInputType.Touch then
+		if is_press(input) then
+			begin()
+		end
+	end))
+
+	bin:add(user_input.InputBegan:Connect(function(input)
+		if not is_press(input) then
 			return
 		end
-
-		dragging = true
-		start_mouse = user_input:GetMouseLocation()
-		start_pos = frame.Position
-
-		if opts.on_start then
-			opts.on_start()
+		if not frame.Visible or not handle.Visible then
+			return
 		end
-
-		if move_connection then
-			move_connection:Disconnect()
+		if inside(input.Position) then
+			begin()
 		end
-		move_connection = run_service.RenderStepped:Connect(function()
-			if not dragging then
-				return
-			end
-			place()
-		end)
 	end))
 
 	bin:add(user_input.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
+		if is_press(input) then
 			stop()
 		end
 	end))
@@ -278,12 +318,69 @@ function util.render_step(name, fn, bin, priority)
 	end)
 end
 
+local key_labels = {
+	RightShift = "rshift",
+	LeftShift = "lshift",
+	RightControl = "rctrl",
+	LeftControl = "lctrl",
+	RightAlt = "ralt",
+	LeftAlt = "lalt",
+	LeftBracket = "[",
+	RightBracket = "]",
+	Semicolon = ";",
+	Quote = "'",
+	Comma = ",",
+	Period = ".",
+	Slash = "/",
+	BackSlash = "\\",
+	Minus = "-",
+	Equals = "=",
+	Backquote = "`",
+	CapsLock = "caps",
+	Insert = "ins",
+	Delete = "del",
+	PageUp = "pgup",
+	PageDown = "pgdn",
+	Backspace = "bksp",
+	Return = "enter",
+	Space = "space",
+	Up = "up",
+	Down = "down",
+	Left = "left",
+	Right = "right",
+	Zero = "0",
+	One = "1",
+	Two = "2",
+	Three = "3",
+	Four = "4",
+	Five = "5",
+	Six = "6",
+	Seven = "7",
+	Eight = "8",
+	Nine = "9",
+}
+
 function util.key_name(key)
 	if typeof(key) ~= "EnumItem" then
 		return "none"
 	end
+
 	local name = key.Name
-	name = name:gsub("^Key", ""):gsub("^Left", "l"):gsub("^Right", "r")
+	local mapped = key_labels[name]
+	if mapped then
+		return mapped
+	end
+
+	if name:match("^KeypadNumber") then
+		return "num" .. name:sub(13)
+	end
+	if name:match("^Keypad") then
+		return "num" .. name:sub(7):lower()
+	end
+	if name:match("^F%d+$") then
+		return name:lower()
+	end
+
 	return name:lower()
 end
 

@@ -285,8 +285,10 @@ end
 local fullbright = render:module{name = "fullbright", description = "removes darkness and fog"}
 fullbright:slider{name = "brightness", min = 1, max = 5, default = 3, decimals = 1}
 
+-- writing lighting every frame forces a full relight and makes the screen
+-- flicker when the window regains focus, so this only writes on a real change
 fullbright.on_enable = function(self)
-	self.saved = {
+	local saved = {
 		Brightness = lighting.Brightness,
 		ClockTime = lighting.ClockTime,
 		FogEnd = lighting.FogEnd,
@@ -295,19 +297,43 @@ fullbright.on_enable = function(self)
 		Ambient = lighting.Ambient,
 		OutdoorAmbient = lighting.OutdoorAmbient,
 	}
+	self.saved = saved
+
+	local writing = false
 
 	local function apply()
-		lighting.Brightness = self:get("brightness")
-		lighting.ClockTime = 12
-		lighting.FogEnd = 100000
-		lighting.FogStart = 100000
-		lighting.GlobalShadows = false
-		lighting.Ambient = Color3.fromRGB(178, 178, 178)
-		lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+		if writing then
+			return
+		end
+		writing = true
+
+		local wanted = {
+			Brightness = self:get("brightness"),
+			ClockTime = 12,
+			FogEnd = 100000,
+			FogStart = 100000,
+			GlobalShadows = false,
+			Ambient = Color3.fromRGB(178, 178, 178),
+			OutdoorAmbient = Color3.fromRGB(178, 178, 178),
+		}
+
+		for key, value in pairs(wanted) do
+			if lighting[key] ~= value then
+				pcall(function()
+					lighting[key] = value
+				end)
+			end
+		end
+
+		writing = false
 	end
 
 	apply()
-	self.bin:add(run_service.Heartbeat:Connect(apply))
+
+	for key in pairs(saved) do
+		self.bin:add(lighting:GetPropertyChangedSignal(key):Connect(apply))
+	end
+	self.bin:add(self.options["brightness"]:listen(apply))
 end
 
 fullbright.on_disable = function(self)
@@ -804,21 +830,35 @@ end
 local nofog = render:module{name = "no fog", description = "clears atmosphere and fog"}
 
 nofog.on_enable = function(self)
-	local hidden = {}
+	local saved_end = lighting.FogEnd
+	local saved_start = lighting.FogStart
+	local atmospheres = {}
+
+	-- density is faded rather than the instance being reparented, pulling it out
+	-- of lighting makes the whole scene pop when it comes back
 	for _, inst in ipairs(lighting:GetChildren()) do
 		if inst:IsA("Atmosphere") then
-			inst.Parent = nil
-			table.insert(hidden, inst)
+			atmospheres[inst] = {density = inst.Density, haze = inst.Haze}
+			inst.Density = 0
+			inst.Haze = 0
 		end
 	end
 
-	local saved_end = lighting.FogEnd
 	lighting.FogEnd = 100000
+	lighting.FogStart = 100000
 
 	self.bin:add(function()
-		lighting.FogEnd = saved_end
-		for _, inst in ipairs(hidden) do
-			inst.Parent = lighting
+		pcall(function()
+			lighting.FogEnd = saved_end
+			lighting.FogStart = saved_start
+		end)
+		for inst, values in pairs(atmospheres) do
+			if inst and inst.Parent then
+				pcall(function()
+					inst.Density = values.density
+					inst.Haze = values.haze
+				end)
+			end
 		end
 	end)
 end

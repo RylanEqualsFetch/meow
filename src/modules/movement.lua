@@ -2,6 +2,8 @@
 
 local util = meow.load("src/core/util.lua")
 local manager = meow.load("src/core/manager.lua")
+local notify = meow.load("src/ui/notify.lua")
+local bedwars = meow.load("src/game/bedwars.lua")
 
 local user_input = util.services.UserInputService
 
@@ -311,14 +313,34 @@ end
 local auto_sprint = movement:module{name = "auto sprint", description = "holds sprint for you"}
 
 auto_sprint.on_enable = function(self)
-	self.bin:add(util.services.RunService.Heartbeat:Connect(function()
-		local humanoid = util.humanoid()
-		if humanoid and humanoid.MoveDirection.Magnitude > 0 then
-			pcall(function()
-				humanoid:SetAttribute("sprinting", true)
-			end)
-		end
-	end))
+	if not bedwars.controller("SprintController") then
+		notify.push("auto sprint needs the bedwars sprint controller")
+		error("sprint controller not found")
+	end
+end
+
+auto_sprint.on_tick = function(self)
+	local sprint = bedwars.controller("SprintController")
+	local humanoid = util.humanoid()
+	if not sprint or not humanoid then
+		return
+	end
+
+	if humanoid.MoveDirection.Magnitude == 0 then
+		return
+	end
+
+	-- the controller owns the state, ask it before starting again
+	local ok, sprinting = pcall(function()
+		return sprint:isSprinting()
+	end)
+	if ok and sprinting then
+		return
+	end
+
+	pcall(function()
+		sprint:startSprinting()
+	end)
 end
 
 -- anti void, yanks you back up when you fall past a height
