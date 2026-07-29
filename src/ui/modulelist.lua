@@ -40,7 +40,7 @@ function modulelist.create(gui, bin)
 			return
 		end
 
-		local width = util.text_width(mod.name, text_size, theme.font_medium) + 20
+		local width = util.text_width(mod.name, text_size, Enum.Font.GothamMedium) + 20
 		local frame = new("Frame", {
 			Parent = holder,
 			BackgroundTransparency = 1,
@@ -72,13 +72,13 @@ function modulelist.create(gui, bin)
 			BackgroundTransparency = 1,
 			Position = UDim2.fromOffset(9, 0),
 			Size = UDim2.new(1, -12, 1, 0),
-			Font = theme.font_medium,
 			Text = mod.name,
 			TextSize = text_size,
 			TextColor3 = theme.text,
 			TextTransparency = 1,
 			TextXAlignment = Enum.TextXAlignment.Left,
 		})
+		theme.apply_font(label, "semibold")
 
 		entries[mod] = {frame = frame, body = body, label = label, bar = bar, width = width}
 		refresh_order()

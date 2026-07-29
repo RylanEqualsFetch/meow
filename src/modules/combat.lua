@@ -12,7 +12,8 @@ local combat = manager.category("combat")
 -- hitbox expander
 
 local hitbox = combat:module{name = "hitbox", description = "grows enemy root parts"}
-hitbox:slider{name = "size", min = 2, max = 40, default = 9, decimals = 1}
+-- bedwars rejects hits from far outside the real hitbox, small values only
+hitbox:slider{name = "size", min = 2, max = 7, default = 3.5, decimals = 1}
 hitbox:slider{name = "transparency", min = 0, max = 1, default = 0.75, decimals = 2}
 hitbox:toggle{name = "team check", default = true}
 
@@ -65,8 +66,8 @@ end
 -- trigger bot, clicks when the crosshair sits on an enemy
 
 local trigger = combat:module{name = "trigger bot", description = "clicks when aiming at an enemy"}
-trigger:slider{name = "delay", min = 0, max = 500, default = 60, suffix = " ms"}
-trigger:slider{name = "range", min = 5, max = 200, default = 40, suffix = " studs"}
+trigger:slider{name = "delay", min = 20, max = 500, default = 90, suffix = " ms"}
+trigger:slider{name = "range", min = 5, max = 25, default = 18, suffix = " studs"}
 trigger:toggle{name = "team check", default = true}
 
 local function click_mouse()
@@ -131,7 +132,7 @@ end
 -- reach, extends tool grip range by scaling the handle hit region
 
 local reach = combat:module{name = "reach", description = "extends the reach of the held tool"}
-reach:slider{name = "studs", min = 1, max = 12, default = 4, decimals = 1}
+reach:slider{name = "studs", min = 0.5, max = 5, default = 2.5, decimals = 1}
 
 reach.on_enable = function(self)
 	self.parts = {}

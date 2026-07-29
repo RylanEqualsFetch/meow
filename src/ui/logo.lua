@@ -16,7 +16,7 @@ local base_dim = 0.72
 local glow_dim = 1
 
 local function build_letter(parent, letter, size, offset, order)
-	local width, height = util.text_width(letter, size, theme.font_bold)
+	local width, height = util.text_width(letter, size, Enum.Font.GothamBold)
 	local cell = new("Frame", {
 		Name = "letter_" .. order,
 		Parent = parent,
@@ -31,7 +31,6 @@ local function build_letter(parent, letter, size, offset, order)
 			Parent = cell,
 			BackgroundTransparency = 1,
 			Size = UDim2.fromScale(1, 1),
-			Font = theme.font_bold,
 			Text = letter,
 			TextSize = size,
 			TextColor3 = theme.accent,
@@ -47,6 +46,7 @@ local function build_letter(parent, letter, size, offset, order)
 				LineJoinMode = Enum.LineJoinMode.Round,
 			}),
 		})
+		theme.apply_font(label, "bold")
 		theme.tint(label, "TextColor3")
 		theme.tint(label:FindFirstChildOfClass("UIStroke"), "Color")
 		glows[layer] = label
@@ -56,7 +56,6 @@ local function build_letter(parent, letter, size, offset, order)
 		Parent = cell,
 		BackgroundTransparency = 1,
 		Size = UDim2.fromScale(1, 1),
-		Font = theme.font_bold,
 		Text = letter,
 		TextSize = size,
 		TextColor3 = theme.text,
@@ -65,6 +64,7 @@ local function build_letter(parent, letter, size, offset, order)
 		TextYAlignment = Enum.TextYAlignment.Center,
 		ZIndex = 3,
 	})
+	theme.apply_font(base, "bold")
 
 	return {
 		cell = cell,
@@ -105,7 +105,35 @@ function logo.create(parent, opts)
 
 	holder.Size = UDim2.fromOffset(math.max(offset - spacing, 1), tallest)
 
-	local self = {
+	local self
+
+	-- the first pass measures with a stock font, once roblox has rendered the real
+	-- family the bounds are exact, so lay the cells out again from those
+	local function relayout()
+		if not holder.Parent then
+			return
+		end
+		local x = 0
+		local tall = 0
+		for _, built in ipairs(letters) do
+			local bounds = built.base.TextBounds
+			local width = math.ceil(math.max(bounds.X, size * 0.4))
+			local height = math.ceil(math.max(bounds.Y, size) * 1.25)
+			built.cell.Position = UDim2.fromOffset(x, 0)
+			built.cell.Size = UDim2.fromOffset(width, height)
+			built.width = width
+			built.height = height
+			x = x + width + spacing
+			tall = math.max(tall, height)
+		end
+		holder.Size = UDim2.fromOffset(math.max(x - spacing, 1), tall)
+		if self then
+			self.width = x - spacing
+			self.height = tall
+		end
+	end
+
+	self = {
 		frame = holder,
 		letters = letters,
 		width = offset - spacing,
@@ -129,6 +157,13 @@ function logo.create(parent, opts)
 			end
 		end
 	end
+
+	task.spawn(function()
+		util.services.RunService.Heartbeat:Wait()
+		relayout()
+	end)
+
+	theme.on_font(relayout)
 
 	-- the writing loop, letters land one after another then the word breathes out
 	task.spawn(function()

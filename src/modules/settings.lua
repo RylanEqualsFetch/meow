@@ -101,6 +101,15 @@ local skin = settings:module{
 	hidden = true,
 }
 
+skin:dropdown{
+	name = "font",
+	values = theme.family_order,
+	default = theme.family,
+	callback = function(value)
+		theme.set_family(value)
+	end,
+}
+
 local accent = skin:color{name = "accent", default = Color3.fromRGB(198, 134, 255)}
 accent:listen(function(color)
 	theme.set_accent(color)

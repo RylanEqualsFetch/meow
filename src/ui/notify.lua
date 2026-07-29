@@ -36,7 +36,7 @@ function notify.push(text, duration)
 	end
 	duration = duration or 3
 
-	local width = math.min(util.text_width(text, 13, theme.font) + 34, 290)
+	local width = math.min(util.text_width(text, 13, Enum.Font.Gotham) + 34, 290)
 
 	local frame = new("Frame", {
 		Parent = holder,
@@ -71,7 +71,6 @@ function notify.push(text, duration)
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(12, 0),
 		Size = UDim2.new(1, -18, 1, 0),
-		Font = theme.font,
 		Text = text,
 		TextSize = 13,
 		TextColor3 = theme.text,
@@ -79,6 +78,7 @@ function notify.push(text, duration)
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
 	})
+	theme.apply_font(label, "medium")
 
 	tween(body, {Position = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 0.05}, 0.22, Enum.EasingStyle.Quint)
 	tween(label, {TextTransparency = 0}, 0.22)

@@ -53,6 +53,12 @@ for _, path in ipairs(module_files) do
 	end
 end
 
+-- theme and layout prefs first so the window is built with them already applied
+local saved = config.read()
+if saved then
+	config.apply_ui(saved)
+end
+
 -- ui, built after the modules so the window can render them
 local watermark = meow.load("src/ui/watermark.lua")
 local modulelist = meow.load("src/ui/modulelist.lua")
@@ -79,7 +85,10 @@ for _, mod in ipairs(manager.module_order) do
 	end
 end
 
-config.load()
+if saved then
+	config.apply_modules(saved)
+end
+
 config.watch(bin)
 
 manager.start(bin)

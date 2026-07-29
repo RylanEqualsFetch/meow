@@ -1,8 +1,9 @@
--- main window, category rail on the left, module rows on the right
+-- vape style layout, a nav panel on the left and one stacked column per category
 
 local util = meow.load("src/core/util.lua")
 local theme = meow.load("src/ui/theme.lua")
 local manager = meow.load("src/core/manager.lua")
+local state = meow.load("src/core/state.lua")
 local logo = meow.load("src/ui/logo.lua")
 
 local new = util.new
@@ -11,9 +12,12 @@ local user_input = util.services.UserInputService
 
 local library = {}
 
-local window_width = 620
-local window_height = 428
-local rail_width = 148
+local nav_width = 208
+local nav_x = 24
+local nav_y = 60
+local column_width = 212
+local column_gap = 10
+local column_max_body = 430
 
 -- normalized drag inside a frame, alpha is clamped 0 to 1 on both axes
 local function bind_drag(frame, bin, callback)
@@ -53,43 +57,14 @@ local function bind_drag(frame, bin, callback)
 	end))
 end
 
-local function make_pill(parent, width, height, position)
-	local pill = new("Frame", {
-		Parent = parent,
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = position,
-		Size = UDim2.fromOffset(width, height),
-		BackgroundColor3 = theme.surface_light,
-		BorderSizePixel = 0,
-	}, {util.corner(height / 2)})
-
-	local knob = new("Frame", {
-		Parent = pill,
-		Position = UDim2.fromOffset(3, 3),
-		Size = UDim2.fromOffset(height - 6, height - 6),
-		BackgroundColor3 = theme.text_faint,
-		BorderSizePixel = 0,
-	}, {util.corner((height - 6) / 2)})
-
-	local function render(on, instant)
-		local speed = instant and 0 or 0.16
-		if on then
-			tween(pill, {BackgroundColor3 = theme.accent}, speed)
-			tween(knob, {
-				Position = UDim2.fromOffset(width - height + 3, 3),
-				BackgroundColor3 = Color3.new(1, 1, 1),
-			}, speed)
-		else
-			tween(pill, {BackgroundColor3 = theme.surface_light}, speed)
-			tween(knob, {
-				Position = UDim2.fromOffset(3, 3),
-				BackgroundColor3 = theme.text_faint,
-			}, speed)
-		end
-	end
-
-	return pill, render
+local function label(parent, props, weight)
+	local text = new("TextLabel", props)
+	text.Parent = parent
+	theme.apply_font(text, weight or "medium")
+	return text
 end
+
+-- option controls, all sized for the column width
 
 local controls = {}
 
@@ -97,22 +72,47 @@ function controls.toggle(parent, option, bin)
 	local row = new("Frame", {
 		Parent = parent,
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 22),
+		Size = UDim2.new(1, 0, 0, 20),
 	})
 
-	new("TextLabel", {
-		Parent = row,
+	label(row, {
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, -46, 1, 0),
-		Font = theme.font,
+		Size = UDim2.new(1, -34, 1, 0),
 		Text = option.name,
 		TextSize = 12,
 		TextColor3 = theme.text_dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
-	})
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, "regular")
 
-	local pill, render = make_pill(row, 28, 14, UDim2.new(1, 0, 0.5, 0))
-	render(option.value, true)
+	local box = new("Frame", {
+		Parent = row,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, 0, 0.5, 0),
+		Size = UDim2.fromOffset(14, 14),
+		BackgroundColor3 = theme.surface_light,
+		BorderSizePixel = 0,
+	}, {util.corner(4)})
+
+	local check = new("Frame", {
+		Parent = box,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(6, 6),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, {util.corner(2)})
+	theme.tint(check, "BackgroundColor3")
+
+	local function render(value)
+		tween(box, {BackgroundColor3 = value and theme.accent_dark or theme.surface_light}, 0.12)
+		tween(check, {
+			BackgroundTransparency = value and 0 or 1,
+			Size = value and UDim2.fromOffset(6, 6) or UDim2.fromOffset(2, 2),
+		}, 0.12)
+	end
+
+	render(option.value)
 
 	local button = new("TextButton", {
 		Parent = row,
@@ -125,9 +125,7 @@ function controls.toggle(parent, option, bin)
 	bin:add(button.MouseButton1Click:Connect(function()
 		option:set(not option.value)
 	end))
-	bin:add(option:listen(function(value)
-		render(value)
-	end))
+	bin:add(option:listen(render))
 
 	return row
 end
@@ -136,46 +134,43 @@ function controls.slider(parent, option, bin)
 	local row = new("Frame", {
 		Parent = parent,
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 32),
+		Size = UDim2.new(1, 0, 0, 30),
 	})
 
-	new("TextLabel", {
-		Parent = row,
+	label(row, {
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, -60, 0, 16),
-		Font = theme.font,
+		Size = UDim2.new(1, -62, 0, 15),
 		Text = option.name,
 		TextSize = 12,
 		TextColor3 = theme.text_dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
-	})
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, "regular")
 
-	local value_label = new("TextLabel", {
-		Parent = row,
+	local value_label = label(row, {
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(1, 0),
 		Position = UDim2.new(1, 0, 0, 0),
-		Size = UDim2.fromOffset(60, 16),
-		Font = theme.font_medium,
+		Size = UDim2.fromOffset(62, 15),
 		Text = tostring(option.value) .. option.suffix,
 		TextSize = 12,
 		TextColor3 = theme.text,
 		TextXAlignment = Enum.TextXAlignment.Right,
-	})
+	}, "semibold")
 
 	local track = new("Frame", {
 		Parent = row,
-		Position = UDim2.fromOffset(0, 22),
-		Size = UDim2.new(1, 0, 0, 5),
+		Position = UDim2.fromOffset(0, 21),
+		Size = UDim2.new(1, 0, 0, 4),
 		BackgroundColor3 = theme.surface_light,
 		BorderSizePixel = 0,
-	}, {util.corner(3)})
+	}, {util.corner(2)})
 
 	local fill = new("Frame", {
 		Parent = track,
 		Size = UDim2.fromScale(0, 1),
 		BorderSizePixel = 0,
-	}, {util.corner(3)})
+	}, {util.corner(2)})
 	theme.tint(fill, "BackgroundColor3")
 
 	local function render(value)
@@ -188,8 +183,8 @@ function controls.slider(parent, option, bin)
 
 	local hit = new("Frame", {
 		Parent = row,
-		Position = UDim2.fromOffset(0, 16),
-		Size = UDim2.new(1, 0, 0, 16),
+		Position = UDim2.fromOffset(0, 15),
+		Size = UDim2.new(1, 0, 0, 15),
 		BackgroundTransparency = 1,
 	})
 
@@ -207,11 +202,11 @@ function controls.dropdown(parent, option, bin)
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-	}, {util.list(4)})
+	}, {util.list(3)})
 
 	local header = new("TextButton", {
 		Parent = row,
-		Size = UDim2.new(1, 0, 0, 26),
+		Size = UDim2.new(1, 0, 0, 24),
 		BackgroundColor3 = theme.surface_light,
 		BorderSizePixel = 0,
 		Text = "",
@@ -219,31 +214,28 @@ function controls.dropdown(parent, option, bin)
 		LayoutOrder = 1,
 	}, {util.corner(5)})
 
-	new("TextLabel", {
-		Parent = header,
+	label(header, {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(8, 0),
-		Size = UDim2.new(0.5, 0, 1, 0),
-		Font = theme.font,
+		Size = UDim2.new(0.45, 0, 1, 0),
 		Text = option.name,
 		TextSize = 12,
 		TextColor3 = theme.text_dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
-	})
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, "regular")
 
-	local value_label = new("TextLabel", {
-		Parent = header,
+	local value_label = label(header, {
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -10, 0, 0),
-		Size = UDim2.new(0.5, -12, 1, 0),
-		Font = theme.font_medium,
+		Position = UDim2.new(1, -8, 0, 0),
+		Size = UDim2.new(0.55, -12, 1, 0),
 		Text = "",
 		TextSize = 12,
 		TextColor3 = theme.text,
 		TextXAlignment = Enum.TextXAlignment.Right,
 		TextTruncate = Enum.TextTruncate.AtEnd,
-	})
+	}, "semibold")
 
 	local list = new("Frame", {
 		Parent = row,
@@ -252,21 +244,7 @@ function controls.dropdown(parent, option, bin)
 		BackgroundTransparency = 1,
 		Visible = false,
 		LayoutOrder = 2,
-	}, {util.list(3)})
-
-	local function selected_text()
-		if not option.multi then
-			return tostring(option.value)
-		end
-		local parts = {}
-		for _, entry in ipairs(option.value) do
-			table.insert(parts, entry)
-		end
-		if #parts == 0 then
-			return "none"
-		end
-		return table.concat(parts, ", ")
-	end
+	}, {util.list(2)})
 
 	local entries = {}
 
@@ -282,13 +260,21 @@ function controls.dropdown(parent, option, bin)
 		return false
 	end
 
+	local function selected_text()
+		if not option.multi then
+			return tostring(option.value)
+		end
+		if #option.value == 0 then
+			return "none"
+		end
+		return table.concat(option.value, ", ")
+	end
+
 	local function render()
 		value_label.Text = selected_text()
 		for entry, button in pairs(entries) do
 			local picked = is_picked(entry)
-			tween(button, {
-				BackgroundColor3 = picked and theme.accent_dark or theme.surface_light,
-			}, 0.12)
+			tween(button, {BackgroundColor3 = picked and theme.accent_dark or theme.surface}, 0.12)
 			button.TextColor3 = picked and theme.text or theme.text_dim
 		end
 	end
@@ -296,16 +282,16 @@ function controls.dropdown(parent, option, bin)
 	for _, entry in ipairs(option.values) do
 		local button = new("TextButton", {
 			Parent = list,
-			Size = UDim2.new(1, 0, 0, 22),
-			BackgroundColor3 = theme.surface_light,
+			Size = UDim2.new(1, 0, 0, 21),
+			BackgroundColor3 = theme.surface,
 			BorderSizePixel = 0,
-			Font = theme.font,
 			Text = "  " .. entry,
 			TextSize = 12,
 			TextColor3 = theme.text_dim,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			AutoButtonColor = false,
 		}, {util.corner(4)})
+		theme.apply_font(button, "regular")
 
 		entries[entry] = button
 
@@ -347,40 +333,38 @@ function controls.color(parent, option, bin)
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-	}, {util.list(6)})
+	}, {util.list(5)})
 
 	local header = new("TextButton", {
 		Parent = row,
-		Size = UDim2.new(1, 0, 0, 22),
+		Size = UDim2.new(1, 0, 0, 20),
 		BackgroundTransparency = 1,
 		Text = "",
 		AutoButtonColor = false,
 		LayoutOrder = 1,
 	})
 
-	new("TextLabel", {
-		Parent = header,
+	label(header, {
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, -40, 1, 0),
-		Font = theme.font,
+		Size = UDim2.new(1, -38, 1, 0),
 		Text = option.name,
 		TextSize = 12,
 		TextColor3 = theme.text_dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
-	})
+	}, "regular")
 
 	local swatch = new("Frame", {
 		Parent = header,
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, 0, 0.5, 0),
-		Size = UDim2.fromOffset(30, 14),
+		Size = UDim2.fromOffset(28, 14),
 		BackgroundColor3 = option.value,
 		BorderSizePixel = 0,
 	}, {util.corner(4), util.stroke(theme.outline, 1, 0.3)})
 
 	local panel = new("Frame", {
 		Parent = row,
-		Size = UDim2.new(1, 0, 0, 116),
+		Size = UDim2.new(1, 0, 0, 108),
 		BackgroundTransparency = 1,
 		Visible = false,
 		LayoutOrder = 2,
@@ -388,7 +372,7 @@ function controls.color(parent, option, bin)
 
 	local square = new("Frame", {
 		Parent = panel,
-		Size = UDim2.new(1, 0, 0, 92),
+		Size = UDim2.new(1, 0, 0, 86),
 		BackgroundColor3 = Color3.fromRGB(255, 0, 0),
 		BorderSizePixel = 0,
 		ClipsDescendants = true,
@@ -436,12 +420,12 @@ function controls.color(parent, option, bin)
 
 	local hue_bar = new("Frame", {
 		Parent = panel,
-		Position = UDim2.fromOffset(0, 100),
-		Size = UDim2.new(1, 0, 0, 12),
+		Position = UDim2.fromOffset(0, 94),
+		Size = UDim2.new(1, 0, 0, 10),
 		BackgroundColor3 = Color3.new(1, 1, 1),
 		BorderSizePixel = 0,
 	}, {
-		util.corner(6),
+		util.corner(5),
 		new("UIGradient", {
 			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
@@ -459,7 +443,7 @@ function controls.color(parent, option, bin)
 		Parent = hue_bar,
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.new(0, 0, 0.5, 0),
-		Size = UDim2.fromOffset(6, 16),
+		Size = UDim2.fromOffset(5, 14),
 		BackgroundColor3 = Color3.new(1, 1, 1),
 		BorderSizePixel = 0,
 		ZIndex = 3,
@@ -503,15 +487,15 @@ end
 function controls.button(parent, option, bin)
 	local button = new("TextButton", {
 		Parent = parent,
-		Size = UDim2.new(1, 0, 0, 26),
+		Size = UDim2.new(1, 0, 0, 24),
 		BackgroundColor3 = theme.surface_light,
 		BorderSizePixel = 0,
-		Font = theme.font_medium,
 		Text = option.name,
 		TextSize = 12,
 		TextColor3 = theme.text,
 		AutoButtonColor = false,
 	}, {util.corner(5)})
+	theme.apply_font(button, "medium")
 
 	bin:add(button.MouseEnter:Connect(function()
 		tween(button, {BackgroundColor3 = theme.surface_hover}, 0.12)
@@ -532,231 +516,125 @@ function controls.button(parent, option, bin)
 end
 
 function library.create(gui, bin)
-	local self = {visible = true, pages = {}, closed = util.signal()}
+	local self = {visible = true, columns = {}, closed = util.signal()}
 
-	local window = new("Frame", {
-		Name = "window",
+	local root = new("Frame", {
+		Name = "ui",
 		Parent = gui,
-		Size = UDim2.fromOffset(window_width, window_height),
-		Position = UDim2.new(0.5, -window_width / 2, 0.5, -window_height / 2),
-		BackgroundColor3 = theme.background,
-		BorderSizePixel = 0,
-		ClipsDescendants = true,
-	}, {
-		util.corner(12),
-		util.stroke(theme.outline, 1, 0.1),
-	})
-	bin:add(window)
-	self.frame = window
-
-	local header = new("Frame", {
-		Parent = window,
-		Size = UDim2.new(1, 0, 0, 58),
 		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
 	})
-
-	local mark = logo.create(header, {size = 24, position = UDim2.fromOffset(18, 16), zindex = 3})
-
-	new("TextLabel", {
-		Parent = header,
-		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(18 + mark.width + 12, 16),
-		Size = UDim2.fromOffset(120, mark.height),
-		Font = theme.font,
-		Text = meow.version,
-		TextSize = 11,
-		TextColor3 = theme.text_faint,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextYAlignment = Enum.TextYAlignment.Center,
-	})
-
-	local close = new("TextButton", {
-		Parent = header,
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -18, 0.5, 0),
-		Size = UDim2.fromOffset(22, 22),
-		BackgroundColor3 = theme.surface,
-		BorderSizePixel = 0,
-		Font = theme.font_bold,
-		Text = "x",
-		TextSize = 12,
-		TextColor3 = theme.text_dim,
-		AutoButtonColor = false,
-	}, {util.corner(6)})
-
-	new("Frame", {
-		Parent = window,
-		Position = UDim2.fromOffset(0, 58),
-		Size = UDim2.new(1, 0, 0, 1),
-		BackgroundColor3 = theme.outline,
-		BackgroundTransparency = 0.4,
-		BorderSizePixel = 0,
-	})
-
-	local rail = new("Frame", {
-		Parent = window,
-		Position = UDim2.fromOffset(0, 59),
-		Size = UDim2.new(0, rail_width, 1, -59),
-		BackgroundTransparency = 1,
-	}, {
-		util.list(4),
-		util.padding(12, 12, 12, 10),
-	})
-
-	new("Frame", {
-		Parent = window,
-		Position = UDim2.fromOffset(rail_width, 59),
-		Size = UDim2.new(0, 1, 1, -59),
-		BackgroundColor3 = theme.outline,
-		BackgroundTransparency = 0.4,
-		BorderSizePixel = 0,
-	})
-
-	local content = new("Frame", {
-		Parent = window,
-		Position = UDim2.fromOffset(rail_width + 1, 59),
-		Size = UDim2.new(1, -rail_width - 1, 1, -59),
-		BackgroundTransparency = 1,
-	})
-
-	util.drag(window, header, bin)
-
-	local buttons = {}
-	local active
-
-	local function select(name)
-		active = name
-		for page_name, page in pairs(self.pages) do
-			page.Visible = page_name == name
-		end
-		for button_name, button in pairs(buttons) do
-			local picked = button_name == name
-			tween(button, {
-				BackgroundTransparency = picked and 0 or 1,
-				TextColor3 = picked and theme.text or theme.text_dim,
-			}, 0.14)
-			local bar = button:FindFirstChild("indicator")
-			if bar then
-				tween(bar, {
-					Size = UDim2.fromOffset(3, picked and 16 or 0),
-					BackgroundTransparency = picked and 0 or 1,
-				}, 0.14)
-			end
-		end
-	end
-
-	self.select = function(_, name)
-		select(name)
-	end
+	bin:add(root)
+	self.frame = root
 
 	-- keybind capture, one listener at a time
 	local capturing
 
-	local function start_capture(mod, label)
+	local function start_capture(mod, key_label)
 		if capturing then
 			capturing()
 		end
-		label.Text = "..."
+		key_label.Text = "..."
+		key_label.Visible = true
+
 		local connection
 		connection = user_input.InputBegan:Connect(function(input, processed)
-			if processed then
-				return
-			end
-			if input.UserInputType ~= Enum.UserInputType.Keyboard then
+			if processed or input.UserInputType ~= Enum.UserInputType.Keyboard then
 				return
 			end
 			connection:Disconnect()
 			capturing = nil
 			if input.KeyCode == Enum.KeyCode.Escape or input.KeyCode == Enum.KeyCode.Backspace then
 				mod:set_key(nil)
-				label.Text = ""
+				key_label.Text = ""
+				key_label.Visible = false
 			else
 				mod:set_key(input.KeyCode)
-				label.Text = util.key_name(input.KeyCode)
+				key_label.Text = util.key_name(input.KeyCode)
 			end
 		end)
+
 		capturing = function()
 			connection:Disconnect()
 			capturing = nil
-			label.Text = mod.key and util.key_name(mod.key) or ""
+			key_label.Text = mod.key and util.key_name(mod.key) or ""
+			key_label.Visible = mod.key ~= nil
 		end
 	end
 
-	local function build_module(page, mod)
-		local row = new("Frame", {
-			Parent = page,
+	-- one module entry inside a column
+	local function build_module(parent, mod, order)
+		local holder = new("Frame", {
+			Parent = parent,
 			Size = UDim2.new(1, 0, 0, 0),
 			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 1,
+			LayoutOrder = order,
+		}, {util.list(3)})
+
+		local button = new("TextButton", {
+			Parent = holder,
+			Size = UDim2.new(1, 0, 0, 30),
 			BackgroundColor3 = theme.surface,
 			BorderSizePixel = 0,
-			ClipsDescendants = true,
-		}, {
-			util.corner(8),
-			util.list(0),
-		})
-
-		local row_header = new("TextButton", {
-			Parent = row,
-			Size = UDim2.new(1, 0, 0, 38),
-			BackgroundTransparency = 1,
 			Text = "",
 			AutoButtonColor = false,
 			LayoutOrder = 1,
-		})
+		}, {util.corner(6)})
 
-		local name_label = new("TextLabel", {
-			Parent = row_header,
+		local name_label = label(button, {
 			BackgroundTransparency = 1,
-			Position = UDim2.fromOffset(14, 0),
-			Size = UDim2.new(1, -130, 1, 0),
-			Font = theme.font_medium,
+			Position = UDim2.fromOffset(11, 0),
+			Size = UDim2.new(1, -52, 1, 0),
 			Text = mod.name,
 			TextSize = 13,
 			TextColor3 = theme.text_dim,
 			TextXAlignment = Enum.TextXAlignment.Left,
-		})
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, "medium")
 
-		local key_label = new("TextLabel", {
-			Parent = row_header,
+		local key_label = label(button, {
 			BackgroundTransparency = 1,
 			AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, -80, 0.5, 0),
-			Size = UDim2.fromOffset(70, 16),
-			Font = theme.font,
+			Position = UDim2.new(1, -26, 0.5, 0),
+			Size = UDim2.fromOffset(60, 14),
 			Text = mod.key and util.key_name(mod.key) or "",
 			TextSize = 11,
 			TextColor3 = theme.text_faint,
 			TextXAlignment = Enum.TextXAlignment.Right,
-		})
+			Visible = mod.key ~= nil,
+		}, "regular")
 
 		local options_frame
-		local expanded = false
-		local chevron
+		local dots
 
 		if #mod.option_order > 0 then
-			chevron = new("TextButton", {
-				Parent = row_header,
+			dots = new("TextButton", {
+				Parent = button,
 				AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, -56, 0.5, 0),
-				Size = UDim2.fromOffset(16, 16),
+				Position = UDim2.new(1, -8, 0.5, 0),
+				Size = UDim2.fromOffset(16, 20),
 				BackgroundTransparency = 1,
-				Font = theme.font_bold,
-				Text = "+",
+				Text = "...",
 				TextSize = 14,
 				TextColor3 = theme.text_faint,
 				AutoButtonColor = false,
 			})
+			theme.apply_font(dots, "bold")
 
 			options_frame = new("Frame", {
-				Parent = row,
+				Parent = holder,
 				Size = UDim2.new(1, 0, 0, 0),
 				AutomaticSize = Enum.AutomaticSize.Y,
-				BackgroundTransparency = 1,
+				BackgroundColor3 = theme.background,
+				BorderSizePixel = 0,
 				Visible = false,
 				LayoutOrder = 2,
 			}, {
-				util.list(8),
-				util.padding(2, 12, 14, 14),
+				util.corner(6),
+				util.stroke(theme.outline, 1, 0.4),
+				util.list(7),
+				util.padding(9, 10, 10, 10),
 			})
 
 			for _, option in ipairs(mod.option_order) do
@@ -766,41 +644,36 @@ function library.create(gui, bin)
 				end
 			end
 
-			bin:add(chevron.MouseButton1Click:Connect(function()
-				expanded = not expanded
-				options_frame.Visible = expanded
-				chevron.Text = expanded and "-" or "+"
+			bin:add(dots.MouseButton1Click:Connect(function()
+				options_frame.Visible = not options_frame.Visible
+				dots.TextColor3 = options_frame.Visible and theme.text or theme.text_faint
 			end))
 		end
 
-		local pill, render_pill = make_pill(row_header, 34, 18, UDim2.new(1, -14, 0.5, 0))
-		render_pill(mod.enabled, true)
-
 		local function render_state(enabled)
-			render_pill(enabled)
+			tween(button, {BackgroundColor3 = enabled and theme.accent_dark or theme.surface}, 0.14)
 			tween(name_label, {TextColor3 = enabled and theme.text or theme.text_dim}, 0.14)
-			tween(row, {BackgroundColor3 = enabled and theme.surface_light or theme.surface}, 0.14)
 		end
 
 		render_state(mod.enabled)
 
-		bin:add(row_header.MouseButton1Click:Connect(function()
+		bin:add(button.MouseButton1Click:Connect(function()
 			mod:toggle_state()
 		end))
 
-		bin:add(row_header.MouseButton2Click:Connect(function()
+		bin:add(button.MouseButton2Click:Connect(function()
 			start_capture(mod, key_label)
 		end))
 
-		bin:add(row_header.MouseEnter:Connect(function()
+		bin:add(button.MouseEnter:Connect(function()
 			if not mod.enabled then
-				tween(row, {BackgroundColor3 = theme.surface_hover}, 0.12)
+				tween(button, {BackgroundColor3 = theme.surface_hover}, 0.12)
 			end
 		end))
 
-		bin:add(row_header.MouseLeave:Connect(function()
+		bin:add(button.MouseLeave:Connect(function()
 			if not mod.enabled then
-				tween(row, {BackgroundColor3 = theme.surface}, 0.12)
+				tween(button, {BackgroundColor3 = theme.surface}, 0.12)
 			end
 		end))
 
@@ -814,47 +687,90 @@ function library.create(gui, bin)
 		bin:add(manager.changed:connect(function()
 			if not capturing then
 				key_label.Text = mod.key and util.key_name(mod.key) or ""
+				key_label.Visible = mod.key ~= nil
 			end
 		end))
 
-		return row
+		return holder
 	end
 
-	for _, category in ipairs(manager.category_order) do
-		local button = new("TextButton", {
-			Parent = rail,
-			Size = UDim2.new(1, 0, 0, 32),
-			BackgroundColor3 = theme.surface,
-			BackgroundTransparency = 1,
+	-- one draggable column per category
+	local function build_column(category, index)
+		local saved = state.columns[category.name] or {}
+
+		local frame = new("Frame", {
+			Name = category.name,
+			Parent = root,
+			Position = UDim2.fromOffset(
+				saved.x or (nav_x + nav_width + 16 + (index - 1) * (column_width + column_gap)),
+				saved.y or nav_y
+			),
+			Size = UDim2.fromOffset(column_width, 40),
+			BackgroundColor3 = theme.background,
+			BackgroundTransparency = 0.05,
 			BorderSizePixel = 0,
-			Font = theme.font_medium,
-			Text = category.name,
-			TextSize = 13,
-			TextColor3 = theme.text_dim,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			AutoButtonColor = false,
-			LayoutOrder = category.index,
+			ClipsDescendants = true,
+			Visible = saved.open ~= false,
 		}, {
-			util.corner(7),
-			util.padding(0, 0, 16, 0),
+			util.corner(10),
+			util.stroke(theme.outline, 1, 0.15),
 		})
 
-		local indicator = new("Frame", {
-			Name = "indicator",
-			Parent = button,
-			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.new(0, -10, 0.5, 0),
-			Size = UDim2.fromOffset(3, 0),
+		local header = new("TextButton", {
+			Parent = frame,
+			Size = UDim2.new(1, 0, 0, 34),
 			BackgroundTransparency = 1,
+			Text = "",
+			AutoButtonColor = false,
+		})
+
+		local accent_dot = new("Frame", {
+			Parent = header,
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 12, 0.5, 0),
+			Size = UDim2.fromOffset(3, 12),
 			BorderSizePixel = 0,
 		}, {util.corner(2)})
-		theme.tint(indicator, "BackgroundColor3")
+		theme.tint(accent_dot, "BackgroundColor3")
 
-		buttons[category.name] = button
+		label(header, {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(23, 0),
+			Size = UDim2.new(1, -60, 1, 0),
+			Text = category.name,
+			TextSize = 13,
+			TextColor3 = theme.text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, "semibold")
 
-		local page = new("ScrollingFrame", {
-			Parent = content,
-			Size = UDim2.fromScale(1, 1),
+		local count = label(header, {
+			BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -28, 0.5, 0),
+			Size = UDim2.fromOffset(24, 14),
+			Text = tostring(#category.modules),
+			TextSize = 11,
+			TextColor3 = theme.text_faint,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, "regular")
+
+		local chevron = new("TextButton", {
+			Parent = header,
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -10, 0.5, 0),
+			Size = UDim2.fromOffset(14, 14),
+			BackgroundTransparency = 1,
+			Text = "^",
+			TextSize = 13,
+			TextColor3 = theme.text_faint,
+			AutoButtonColor = false,
+		})
+		theme.apply_font(chevron, "bold")
+
+		local body = new("ScrollingFrame", {
+			Parent = frame,
+			Position = UDim2.fromOffset(0, 34),
+			Size = UDim2.new(1, 0, 0, 0),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			ScrollBarThickness = 2,
@@ -862,55 +778,303 @@ function library.create(gui, bin)
 			CanvasSize = UDim2.new(),
 			AutomaticCanvasSize = Enum.AutomaticSize.Y,
 			ScrollingDirection = Enum.ScrollingDirection.Y,
-			Visible = false,
 		}, {
-			util.list(6),
-			util.padding(12, 14, 14, 14),
+			util.list(4),
+			util.padding(2, 10, 10, 10),
 		})
 
-		self.pages[category.name] = page
-
-		for _, mod in ipairs(category.modules) do
-			-- hidden only keeps a module out of the hud list, it still gets a row
-			build_module(page, mod)
+		for order, mod in ipairs(category.modules) do
+			build_module(body, mod, order)
 		end
 
+		local layout = body:FindFirstChildOfClass("UIListLayout")
+		local collapsed = saved.collapsed == true
+
+		local function resize()
+			if collapsed then
+				body.Visible = false
+				tween(frame, {Size = UDim2.fromOffset(column_width, 34)}, 0.14)
+				return
+			end
+			body.Visible = true
+			local content = layout.AbsoluteContentSize.Y + 12
+			local height = math.min(content, column_max_body)
+			body.Size = UDim2.new(1, 0, 0, height)
+			tween(frame, {Size = UDim2.fromOffset(column_width, 34 + height)}, 0.14)
+		end
+
+		resize()
+		bin:add(layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize))
+
+		util.drag(frame, header, bin)
+
+		local column = {frame = frame, category = category.name}
+
+		function column:set_open(open)
+			frame.Visible = open and true or false
+			state.columns[category.name] = state.columns[category.name] or {}
+			state.columns[category.name].open = frame.Visible
+		end
+
+		function column:is_open()
+			return frame.Visible
+		end
+
+		function column:set_collapsed(value)
+			collapsed = value and true or false
+			chevron.Text = collapsed and "v" or "^"
+			state.columns[category.name] = state.columns[category.name] or {}
+			state.columns[category.name].collapsed = collapsed
+			resize()
+		end
+
+		column:set_collapsed(collapsed)
+
+		bin:add(chevron.MouseButton1Click:Connect(function()
+			column:set_collapsed(not collapsed)
+		end))
+
+		-- remember where the user parks each column
+		bin:add(frame:GetPropertyChangedSignal("Position"):Connect(function()
+			local entry = state.columns[category.name] or {}
+			entry.x = frame.Position.X.Offset
+			entry.y = frame.Position.Y.Offset
+			entry.open = frame.Visible
+			entry.collapsed = collapsed
+			state.columns[category.name] = entry
+		end))
+
+		count.Text = tostring(#category.modules)
+		return column
+	end
+
+	for index, category in ipairs(manager.category_order) do
+		self.columns[category.name] = build_column(category, index)
+	end
+
+	-- nav panel
+
+	local nav = new("Frame", {
+		Name = "nav",
+		Parent = root,
+		Position = UDim2.fromOffset(state.nav_x or nav_x, state.nav_y or nav_y),
+		Size = UDim2.fromOffset(nav_width, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = theme.background,
+		BackgroundTransparency = 0.05,
+		BorderSizePixel = 0,
+	}, {
+		util.corner(12),
+		util.stroke(theme.outline, 1, 0.15),
+		util.list(0),
+		util.padding(0, 12, 0, 0),
+	})
+
+	local nav_header = new("Frame", {
+		Parent = nav,
+		Size = UDim2.new(1, 0, 0, 56),
+		BackgroundTransparency = 1,
+		LayoutOrder = 1,
+	})
+
+	local mark = logo.create(nav_header, {size = 24, position = UDim2.fromOffset(16, 16), zindex = 3})
+
+	label(nav_header, {
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -14, 0, 22),
+		Size = UDim2.fromOffset(70, 14),
+		Text = meow.version,
+		TextSize = 11,
+		TextColor3 = theme.text_faint,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, "regular")
+
+	util.drag(nav, nav_header, bin)
+
+	local function section(title, order)
+		local holder = new("Frame", {
+			Parent = nav,
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 1,
+			LayoutOrder = order,
+		}, {util.list(2), util.padding(6, 4, 10, 10)})
+
+		if title then
+			local caption = label(holder, {
+				BackgroundTransparency = 1,
+				Size = UDim2.new(1, 0, 0, 18),
+				Text = title,
+				TextSize = 10,
+				TextColor3 = theme.text_faint,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				LayoutOrder = 0,
+			}, "semibold")
+			caption.Parent = holder
+		end
+
+		return holder
+	end
+
+	local function nav_row(parent, text, order)
+		local button = new("TextButton", {
+			Parent = parent,
+			Size = UDim2.new(1, 0, 0, 30),
+			BackgroundColor3 = theme.surface,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			Text = "",
+			AutoButtonColor = false,
+			LayoutOrder = order,
+		}, {util.corner(6)})
+
+		local text_label = label(button, {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(11, 0),
+			Size = UDim2.new(1, -34, 1, 0),
+			Text = text,
+			TextSize = 13,
+			TextColor3 = theme.text_dim,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, "medium")
+
+		local mark_label = label(button, {
+			BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -10, 0.5, 0),
+			Size = UDim2.fromOffset(12, 14),
+			Text = ">",
+			TextSize = 12,
+			TextColor3 = theme.text_faint,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, "bold")
+
+		return button, text_label, mark_label
+	end
+
+	local categories_section = section(nil, 2)
+
+	for index, category in ipairs(manager.category_order) do
+		local column = self.columns[category.name]
+		local button, text_label, mark_label = nav_row(categories_section, category.name, index)
+
+		local function render()
+			local open = column:is_open()
+			tween(button, {BackgroundTransparency = open and 0 or 1}, 0.12)
+			tween(text_label, {TextColor3 = open and theme.text or theme.text_dim}, 0.12)
+			mark_label.Text = open and "v" or ">"
+			if open then
+				button.BackgroundColor3 = theme.surface
+			end
+		end
+
+		render()
+
 		bin:add(button.MouseButton1Click:Connect(function()
-			select(category.name)
+			column:set_open(not column:is_open())
+			render()
+		end))
+
+		bin:add(button.MouseEnter:Connect(function()
+			if not column:is_open() then
+				tween(button, {BackgroundTransparency = 0.6}, 0.12)
+			end
+		end))
+
+		bin:add(button.MouseLeave:Connect(function()
+			render()
 		end))
 	end
 
-	if manager.category_order[1] then
-		select(manager.category_order[1].name)
-	end
+	local overlays_section = section("overlays", 3)
 
-	function self:set_visible(visible)
-		self.visible = visible and true or false
-		if self.visible then
-			window.Visible = true
-			window.Size = UDim2.fromOffset(window_width * 0.96, window_height * 0.96)
-			tween(window, {Size = UDim2.fromOffset(window_width, window_height)}, 0.18, Enum.EasingStyle.Back)
-		else
-			tween(window, {Size = UDim2.fromOffset(window_width * 0.96, window_height * 0.96)}, 0.12)
-			task.delay(0.12, function()
-				if not self.visible and window.Parent then
-					window.Visible = false
+	local overlay_modules = {"watermark", "module list"}
+	for index, name in ipairs(overlay_modules) do
+		local mod = manager.modules["settings/" .. name]
+		if mod then
+			local button, text_label, mark_label = nav_row(overlays_section, name, index)
+			mark_label.Text = ""
+
+			local dot = new("Frame", {
+				Parent = button,
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -12, 0.5, 0),
+				Size = UDim2.fromOffset(7, 7),
+				BackgroundColor3 = theme.surface_light,
+				BorderSizePixel = 0,
+			}, {util.corner(4)})
+
+			local function render(enabled)
+				tween(dot, {BackgroundColor3 = enabled and theme.accent or theme.surface_light}, 0.12)
+				tween(text_label, {TextColor3 = enabled and theme.text or theme.text_dim}, 0.12)
+			end
+
+			render(mod.enabled)
+
+			bin:add(button.MouseButton1Click:Connect(function()
+				mod:toggle_state()
+			end))
+
+			bin:add(manager.toggled:connect(function(changed, enabled)
+				if changed == mod then
+					render(enabled)
 				end
-			end)
+			end))
 		end
 	end
 
-	bin:add(close.MouseButton1Click:Connect(function()
+	local misc_section = section("misc", 4)
+
+	local hide_button, hide_label = nav_row(misc_section, "hide menu", 1)
+	hide_label.TextColor3 = theme.text_dim
+	bin:add(hide_button.MouseButton1Click:Connect(function()
 		self:set_visible(false)
 		self.closed:fire()
 	end))
+	bin:add(hide_button.MouseEnter:Connect(function()
+		tween(hide_button, {BackgroundTransparency = 0.6}, 0.12)
+	end))
+	bin:add(hide_button.MouseLeave:Connect(function()
+		tween(hide_button, {BackgroundTransparency = 1}, 0.12)
+	end))
 
-	bin:add(close.MouseEnter:Connect(function()
-		tween(close, {BackgroundColor3 = theme.bad, TextColor3 = theme.text}, 0.12)
+	local unload_button, unload_label, unload_mark = nav_row(misc_section, "unload", 2)
+	unload_mark.Text = "x"
+	unload_label.TextColor3 = theme.bad
+	unload_mark.TextColor3 = theme.bad
+
+	bin:add(unload_button.MouseEnter:Connect(function()
+		tween(unload_button, {BackgroundColor3 = theme.bad, BackgroundTransparency = 0.82}, 0.12)
 	end))
-	bin:add(close.MouseLeave:Connect(function()
-		tween(close, {BackgroundColor3 = theme.surface, TextColor3 = theme.text_dim}, 0.12)
+	bin:add(unload_button.MouseLeave:Connect(function()
+		tween(unload_button, {BackgroundTransparency = 1}, 0.12)
 	end))
+	bin:add(unload_button.MouseButton1Click:Connect(function()
+		task.spawn(function()
+			if type(meow.unload) == "function" then
+				meow.unload()
+			end
+		end)
+	end))
+
+	-- remember where the nav sits
+	bin:add(nav:GetPropertyChangedSignal("Position"):Connect(function()
+		state.nav_x = nav.Position.X.Offset
+		state.nav_y = nav.Position.Y.Offset
+	end))
+
+	function self:set_visible(visible)
+		self.visible = visible and true or false
+		root.Visible = self.visible
+	end
+
+	function self:select(name)
+		local column = self.columns[name]
+		if column then
+			column:set_open(true)
+		end
+	end
 
 	bin:add(function()
 		mark:destroy()

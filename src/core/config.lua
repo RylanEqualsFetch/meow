@@ -1,4 +1,5 @@
--- saves module states, keybinds and option values to disk
+-- saves module states, keybinds, option values and window layout to disk
+-- the ui half is applied before the window is built, the module half after
 
 local util = meow.load("src/core/util.lua")
 local manager = meow.load("src/core/manager.lua")
@@ -61,13 +62,23 @@ local function decode_option(option, data)
 end
 
 function config.serialize()
+	local columns = {}
+	for name, entry in pairs(state.columns) do
+		columns[name] = {
+			open = entry.open ~= false,
+			collapsed = entry.collapsed == true,
+			x = entry.x,
+			y = entry.y,
+		}
+	end
+
 	local data = {
 		version = meow.version,
-		menu_key = state.menu_key and state.menu_key.Name or nil,
-		watermark = state.watermark,
-		module_list = state.module_list,
-		notifications = state.notifications,
 		accent = encode_color(theme.accent),
+		font = theme.family,
+		nav_x = state.nav_x,
+		nav_y = state.nav_y,
+		columns = columns,
 		modules = {},
 	}
 
@@ -88,22 +99,14 @@ function config.serialize()
 	return data
 end
 
-function config.apply(data)
+-- theme and layout, safe to run before the window exists
+function config.apply_ui(data)
 	if type(data) ~= "table" then
 		return
 	end
 
-	if type(data.menu_key) == "string" and Enum.KeyCode[data.menu_key] then
-		state.menu_key = Enum.KeyCode[data.menu_key]
-	end
-	if type(data.watermark) == "boolean" then
-		state.watermark = data.watermark
-	end
-	if type(data.module_list) == "boolean" then
-		state.module_list = data.module_list
-	end
-	if type(data.notifications) == "boolean" then
-		state.notifications = data.notifications
+	if type(data.font) == "string" then
+		theme.set_family(data.font)
 	end
 
 	local accent = decode_color(data.accent)
@@ -111,7 +114,30 @@ function config.apply(data)
 		theme.set_accent(accent)
 	end
 
-	if type(data.modules) ~= "table" then
+	if type(data.nav_x) == "number" then
+		state.nav_x = data.nav_x
+	end
+	if type(data.nav_y) == "number" then
+		state.nav_y = data.nav_y
+	end
+
+	if type(data.columns) == "table" then
+		for name, entry in pairs(data.columns) do
+			if type(entry) == "table" then
+				state.columns[name] = {
+					open = entry.open ~= false,
+					collapsed = entry.collapsed == true,
+					x = tonumber(entry.x),
+					y = tonumber(entry.y),
+				}
+			end
+		end
+	end
+end
+
+-- module states and option values, needs the window so the rows can follow
+function config.apply_modules(data)
+	if type(data) ~= "table" or type(data.modules) ~= "table" then
 		return
 	end
 
@@ -130,6 +156,25 @@ function config.apply(data)
 			mod:set_enabled(entry.enabled == true, true)
 		end
 	end
+
+	manager.changed:fire()
+end
+
+function config.read()
+	if not can_write or not isfile(path) then
+		return nil
+	end
+	local ok, raw = pcall(readfile, path)
+	if not ok or type(raw) ~= "string" or #raw == 0 then
+		return nil
+	end
+	local decoded, data = pcall(function()
+		return http_service:JSONDecode(raw)
+	end)
+	if not decoded or type(data) ~= "table" then
+		return nil
+	end
+	return data
 end
 
 function config.save()
@@ -146,25 +191,16 @@ function config.save()
 		warn("meow: config encode failed: " .. tostring(encoded))
 		return false
 	end
-	local written = pcall(writefile, path, encoded)
-	return written
+	return pcall(writefile, path, encoded)
 end
 
 function config.load()
-	if not can_write or not isfile(path) then
+	local data = config.read()
+	if not data then
 		return false
 	end
-	local ok, raw = pcall(readfile, path)
-	if not ok or type(raw) ~= "string" or #raw == 0 then
-		return false
-	end
-	local decoded, data = pcall(function()
-		return http_service:JSONDecode(raw)
-	end)
-	if not decoded then
-		return false
-	end
-	config.apply(data)
+	config.apply_ui(data)
+	config.apply_modules(data)
 	return true
 end
 

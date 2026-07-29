@@ -48,8 +48,12 @@ end
 
 -- fly
 
+-- the bedwars anticheat rejects anything past about 23 studs a second, every
+-- speed value in this file stays under that ceiling on purpose
+local speed_ceiling = 23
+
 local fly = movement:module{name = "fly", description = "free camera relative flight"}
-fly:slider{name = "speed", min = 10, max = 400, default = 90}
+fly:slider{name = "speed", min = 8, max = speed_ceiling, default = 20}
 fly:toggle{name = "hover", default = true, tooltip = "hold position when no keys are held"}
 
 fly.on_enable = function(self)
@@ -98,7 +102,7 @@ end
 
 local speed = movement:module{name = "speed", description = "walk faster"}
 speed:dropdown{name = "mode", values = {"walkspeed", "cframe"}, default = "walkspeed"}
-speed:slider{name = "amount", min = 16, max = 200, default = 45}
+speed:slider{name = "amount", min = 16, max = speed_ceiling, default = 21, decimals = 1}
 
 speed.on_enable = function(self)
 	local humanoid = util.humanoid()
@@ -118,15 +122,18 @@ speed.on_tick = function(self, delta)
 		return
 	end
 
+	-- clamped again here so a config file cannot push past the ceiling
+	local amount = math.min(self:get("amount"), speed_ceiling)
+
 	if self:get("mode") == "walkspeed" then
-		humanoid.WalkSpeed = self:get("amount")
+		humanoid.WalkSpeed = amount
 		return
 	end
 
 	humanoid.WalkSpeed = self.saved_speed or 16
 	local direction = humanoid.MoveDirection
 	if direction.Magnitude > 0 then
-		local extra = self:get("amount") - (self.saved_speed or 16)
+		local extra = amount - (self.saved_speed or 16)
 		if extra > 0 then
 			root.CFrame = root.CFrame + direction * extra * delta
 		end
@@ -180,7 +187,7 @@ end
 -- high jump
 
 local high_jump = movement:module{name = "high jump", description = "raises jump power"}
-high_jump:slider{name = "power", min = 50, max = 300, default = 90}
+high_jump:slider{name = "power", min = 50, max = 68, default = 58}
 
 high_jump.on_enable = function(self)
 	local humanoid = util.humanoid()
@@ -211,7 +218,7 @@ end
 -- spider, climb walls by pushing into them
 
 local spider = movement:module{name = "spider", description = "climb any wall you walk into"}
-spider:slider{name = "speed", min = 5, max = 60, default = 22}
+spider:slider{name = "speed", min = 5, max = speed_ceiling, default = 14}
 
 spider.on_tick = function(self)
 	local root = util.root()

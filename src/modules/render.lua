@@ -45,26 +45,26 @@ local function make_entry(container, player)
 		AnchorPoint = Vector2.new(0.5, 1),
 		BackgroundTransparency = 1,
 		Size = UDim2.fromOffset(200, 14),
-		Font = theme.font_medium,
 		Text = player.Name,
 		TextSize = 13,
 		TextColor3 = Color3.new(1, 1, 1),
 		TextStrokeTransparency = 0.4,
 		Visible = false,
 	})
+	theme.apply_font(entry.name, "semibold")
 
 	entry.distance = new("TextLabel", {
 		Parent = container,
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 1,
 		Size = UDim2.fromOffset(200, 13),
-		Font = theme.font,
 		Text = "",
 		TextSize = 12,
 		TextColor3 = Color3.new(1, 1, 1),
 		TextStrokeTransparency = 0.5,
 		Visible = false,
 	})
+	theme.apply_font(entry.distance, "medium")
 
 	entry.health = new("Frame", {
 		Parent = container,

@@ -51,12 +51,12 @@ function watermark.create(gui, bin)
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(0, mark.height + 1),
 		Size = UDim2.new(1, 0, 0, 14),
-		Font = theme.font,
 		Text = "loading",
 		TextSize = 11,
 		TextColor3 = theme.text_dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
 	})
+	theme.apply_font(stats, "medium")
 
 	holder.Size = UDim2.fromOffset(math.max(mark.width + 60, 150), mark.height + 30)
 

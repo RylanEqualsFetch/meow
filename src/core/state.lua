@@ -1,10 +1,12 @@
--- shared runtime state, written by init and by the settings modules
+-- shared runtime state, written by init, the ui and the settings modules
 
 local state = {
-	menu_key = Enum.KeyCode.RightShift,
 	watermark = true,
 	module_list = true,
 	notifications = true,
+	nav_x = nil,
+	nav_y = nil,
+	columns = {},
 	ui = {},
 }
 

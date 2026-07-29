@@ -28,7 +28,8 @@ end
 -- auto clicker
 
 local auto_clicker = utility:module{name = "auto clicker", description = "clicks while the mouse is held"}
-auto_clicker:slider{name = "cps", min = 1, max = 30, default = 14}
+-- anything past twenty clicks a second reads as automated, cap it there
+auto_clicker:slider{name = "cps", min = 1, max = 20, default = 12}
 auto_clicker:toggle{name = "hold only", default = true}
 
 auto_clicker.on_enable = function(self)
