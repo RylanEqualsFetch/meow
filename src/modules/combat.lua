@@ -27,11 +27,16 @@ aura:toggle{name = "wall check", default = false}
 aura:toggle{name = "team check", default = true}
 
 aura.on_enable = function(self)
-	if not bedwars.attack_remote() and not bedwars.ready() then
-		notify.push("kill aura found no swing remote, run debug info")
-		error("no swing path")
-	end
 	self.next_swing = 0
+
+	local remote = bedwars.attack_remote() ~= nil
+	local controller = bedwars.ready()
+
+	if not remote and not controller then
+		notify.push("kill aura found no swing path yet, it will retry")
+	elseif not remote then
+		notify.push("kill aura is on the controller path, no swing remote found", 4)
+	end
 end
 
 -- everything alive and hostile inside the range, nearest first
@@ -95,39 +100,28 @@ aura.on_tick = function(self)
 		return
 	end
 
-	-- the weapon travels in the payload, so a silent hit needs no equip at all
-	local weapon
-	if self:get("silent") then
-		weapon = bedwars.best_sword()
-	end
-	if not weapon then
-		local held = bedwars.held_tool()
-		weapon = bedwars.is_sword(held) and held or bedwars.best_sword()
-	end
+	-- the weapon rides in the remote payload, but the controller path needs
+	-- something in hand, so fall back to whatever is held rather than bailing
+	local weapon = bedwars.best_sword() or bedwars.held_tool()
 
-	if not weapon then
-		self.next_swing = now + 0.25
-		return
-	end
-
-	local found = aura_targets(self, self:get("range"))
-	if #found == 0 then
-		self.next_swing = now + 0.05
-		return
-	end
-
-	local limit = math.min(#found, self:get("targets"))
+	local range = self:get("range")
+	local found = aura_targets(self, range)
 	local swung = false
 
-	for index = 1, limit do
-		if bedwars.swing_at(found[index].character, weapon) then
-			swung = true
+	if #found > 0 and weapon then
+		local limit = math.min(#found, self:get("targets"))
+		for index = 1, limit do
+			if bedwars.swing_at(found[index].character, weapon) then
+				swung = true
+			end
 		end
 	end
 
-	-- no remote available, fall back to the controller path
+	-- the controller path is the one that was landing hits before the remote
+	-- rewrite, so it always runs as a backstop rather than only when the remote
+	-- is missing entirely
 	if not swung then
-		local target = bedwars.target_in_range(self:get("range"))
+		local target = bedwars.target_in_range(range)
 		if target then
 			swung = bedwars.attack(target)
 		end
@@ -141,114 +135,69 @@ aura.on_tick = function(self)
 end
 
 -- reach
--- vape writes the shared combat constant, but attackEntity only falls back to
--- that when the weapon carries no attackRange of its own, and every sword does,
--- so the item meta has to be patched as well or nothing changes
+-- straight port of the cat client. the sword side is only the shared constant.
+-- my previous version also wrote attackRange onto every sword in the item meta,
+-- and since attackEntity prefers that field over the constant, it was pinning
+-- the range to a lower number and cancelling the constant out. that write is gone
 
-local base_reach = 14.4
+local base_sword_reach = 14.4
+local base_place_range = 24
+local base_break_range = 18
 
-reach = combat:module{name = "reach", description = "extends reach on your own clicks"}
-reach:slider{name = "range", min = 0, max = 18, default = 14, decimals = 1, suffix = " studs"}
+reach = combat:module{name = "reach", description = "attack, place and break further"}
+reach:slider{name = "sword", min = 4, max = 24, default = 18, decimals = 1, suffix = " studs"}
+reach:toggle{name = "block reach", default = true}
+reach:slider{name = "place", min = 12, max = 60, default = 30, suffix = " studs"}
+reach:slider{name = "break", min = 12, max = 60, default = 26, suffix = " studs"}
 
-local sword_ranges = {}
-
-local function apply_reach(studs)
+local function push_sword_reach(value)
 	local constants = bedwars.combat_constant()
-	if constants then
-		constants.RAYCAST_SWORD_CHARACTER_DISTANCE = studs + 2
-		constants.REGION_SWORD_CHARACTER_DISTANCE = studs + 2
+	if not constants then
+		return false
 	end
-
-	local meta = bedwars.item_meta()
-	if not meta then
-		return constants ~= nil
-	end
-
-	for name, entry in pairs(meta) do
-		if type(entry) == "table" and type(entry.sword) == "table" then
-			if sword_ranges[name] == nil then
-				sword_ranges[name] = entry.sword.attackRange or false
-			end
-			entry.sword.attackRange = studs
-		end
-	end
-
+	-- attackEntity allows the value plus two, cat sends range plus two as well
+	constants.RAYCAST_SWORD_CHARACTER_DISTANCE = value + 2
 	return true
-end
-
-local function restore_reach()
-	local constants = bedwars.combat_constant()
-	if constants then
-		constants.RAYCAST_SWORD_CHARACTER_DISTANCE = base_reach
-		constants.REGION_SWORD_CHARACTER_DISTANCE = 12.6
-	end
-
-	local meta = bedwars.item_meta()
-	if meta then
-		for name, saved in pairs(sword_ranges) do
-			local entry = meta[name]
-			if type(entry) == "table" and type(entry.sword) == "table" then
-				entry.sword.attackRange = saved or nil
-			end
-		end
-	end
-	sword_ranges = {}
 end
 
 reach.on_enable = function(self)
 	local attached = {}
 
-	-- one, the shared constant, which only matters for weapons with no range
-	if bedwars.combat_constant() then
-		table.insert(attached, "constant")
+	if push_sword_reach(self:get("sword")) then
+		table.insert(attached, "sword")
 	end
 
-	-- two, the raw item meta, this is what attackEntity actually reads
-	local meta = bedwars.item_meta()
-	if meta then
-		table.insert(attached, "item meta")
-	end
-
-	apply_reach(self:get("range"))
-
-	-- three, the per swing meta clone, the same hook the games dagger uses
-	local hook = bedwars.hook_sword_meta and bedwars.hook_sword_meta(function(clone)
-		if type(clone.sword) == "table" then
-			clone.sword.attackRange = self:get("range")
+	self.bin:add(function()
+		local constants = bedwars.combat_constant()
+		if constants then
+			constants.RAYCAST_SWORD_CHARACTER_DISTANCE = base_sword_reach
 		end
 	end)
 
-	local events = bedwars.sync_events()
-	if events and not hook then
-		local ok, handle = pcall(function()
-			return events.BeforeSwordSwing:connect(function(_, payload)
-				if type(payload) == "table" and type(payload.weaponMetaClone) == "table" then
-					local sword = payload.weaponMetaClone.sword
-					if type(sword) == "table" then
-						sword.attackRange = self:get("range")
-					end
-				end
-			end)
-		end)
-		if ok then
-			hook = handle
-			table.insert(attached, "swing hook")
-		end
-	end
+	self.bin:add(self.options["sword"]:listen(push_sword_reach))
 
-	if hook then
+	-- place and break range ride on the selector call the client already makes
+	local selector = bedwars.block_selector()
+	if selector and self:get("block reach") then
+		local original = selector.getMouseInfo
+
+		selector.getMouseInfo = function(this, mode, args, ...)
+			args = args or {}
+			if mode == 0 then
+				args.range = self:get("place")
+			elseif mode == 1 then
+				args.range = self:get("break")
+			end
+			return original(this, mode, args, ...)
+		end
+
+		table.insert(attached, "blocks")
+
 		self.bin:add(function()
-			pcall(function()
-				if type(hook) == "function" then
-					hook()
-				elseif type(hook) == "table" then
-					if type(hook.disconnect) == "function" then
-						hook:disconnect()
-					elseif type(hook.Disconnect) == "function" then
-						hook:Disconnect()
-					end
-				end
-			end)
+			local current = bedwars.block_selector()
+			if current then
+				current.getMouseInfo = original
+			end
 		end)
 	end
 
@@ -257,18 +206,12 @@ reach.on_enable = function(self)
 		error("no reach mechanism available")
 	end
 
-	notify.push("reach hooked " .. table.concat(attached, ", "), 4)
-
-	self.bin:add(self.options["range"]:listen(function(value)
-		apply_reach(value)
-	end))
-
-	self.bin:add(restore_reach)
+	notify.push("reach on for " .. table.concat(attached, " and "), 4)
 end
 
 function reach.range_studs()
 	if reach.enabled then
-		return reach:get("range") + 2
+		return reach:get("sword") + 2
 	end
 	return nil
 end

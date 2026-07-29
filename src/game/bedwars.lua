@@ -822,6 +822,29 @@ function bedwars.best_sword()
 	return best
 end
 
+-- the block selector, cat reaches place and break range by widening the range
+-- argument on its mouse info call
+function bedwars.block_selector()
+	local hit = fresh("block_selector")
+	if hit then
+		return hit
+	end
+	if not ready_to_retry("block_selector") then
+		return nil
+	end
+
+	local searched = search_module_cached("block-selector")
+	local value = searched and (searched.BlockSelector or searched.default)
+	if type(value) ~= "table" then
+		value = searched
+	end
+
+	if type(value) == "table" and type(value.getMouseInfo) == "function" then
+		return remember("block_selector", value)
+	end
+	return remember("block_selector", nil)
+end
+
 -- movement modifiers
 -- the sprint controller keeps a modifier list and recomputes moveSpeedMultiplier
 -- from it on every reconcile, then setSpeed does base times that multiplier and
@@ -1072,6 +1095,7 @@ function bedwars.report()
 		{"swing remote", bedwars.attack_remote},
 		{"sprint controller", bedwars.sprint_controller},
 		{"movement modifiers", bedwars.movement_modifiers},
+		{"block selector", bedwars.block_selector},
 		{"block placer", bedwars.placer},
 		{"entity util", bedwars.entity_util},
 		{"world util", bedwars.world_util},
