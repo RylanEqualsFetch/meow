@@ -630,6 +630,182 @@ chest_esp.on_enable = function(self)
 	end)
 end
 
+-- texture pack
+-- the cat client loadstrings a script out of a third party repo for this. the
+-- packs themselves are just roblox model assets, so this loads the model and
+-- does the swap here instead of running someone elses code inside the client
+
+local pack_ids = {
+	["acidic"] = 14245759641,
+	["devourer"] = 14258977192,
+	["enlightened"] = 14261862180,
+	["fat cat"] = 100570768622198,
+	["fury"] = 14331255019,
+	["makima"] = 14335043180,
+	["moon"] = 14271708146,
+	["nebula"] = 14654171957,
+	["onyx"] = 14334779267,
+	["prime"] = 14479023830,
+	["simply"] = 117028342668949,
+	["vile"] = 14247192725,
+	["violets dreams"] = 14248304333,
+	["wichtiger"] = 14320382383,
+}
+
+local pack_names = {
+	"simply",
+	"acidic",
+	"devourer",
+	"enlightened",
+	"fat cat",
+	"fury",
+	"makima",
+	"moon",
+	"nebula",
+	"onyx",
+	"prime",
+	"vile",
+	"violets dreams",
+	"wichtiger",
+}
+
+local texture_pack = render:module{name = "texture pack", description = "replaces the held item models"}
+texture_pack:dropdown{name = "pack", values = pack_names, default = "simply"}
+texture_pack:input{name = "custom model id", placeholder = "optional asset id"}
+texture_pack:slider{name = "scale", min = 0.5, max = 2.5, default = 1.375, decimals = 3}
+
+local function strip_physics(model)
+	for _, part in ipairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			pcall(function()
+				part.CanCollide = false
+				part.CanQuery = false
+				part.CanTouch = false
+				part.Massless = true
+			end)
+		end
+	end
+	if model:IsA("BasePart") then
+		pcall(function()
+			model.CanCollide = false
+			model.CanQuery = false
+		end)
+	end
+end
+
+-- the offsets every pack script uses, a sword lies along one axis and the tools
+-- along another, then the whole thing gets a yaw of minus fifty
+local function offset_for(name)
+	local lower = name:lower()
+	if lower:find("sword", 1, true) or lower:find("knife", 1, true) then
+		return CFrame.Angles(0, math.rad(-100), math.rad(-90))
+	end
+	return CFrame.new(0, 0.45, 0) * CFrame.Angles(0, math.rad(-10), math.rad(-95))
+end
+
+texture_pack.on_enable = function(self)
+	local custom = tostring(self:get("custom model id") or ""):match("%d+")
+	local id = custom and tonumber(custom) or pack_ids[self:get("pack")]
+	if not id then
+		notify.push("texture pack could not resolve that id")
+		error("no pack id")
+	end
+
+	local ok, objects = pcall(function()
+		return game:GetObjects("rbxassetid://" .. tostring(id))
+	end)
+	local source = ok and type(objects) == "table" and objects[1] or nil
+	if not source then
+		notify.push("texture pack could not load asset " .. tostring(id))
+		error("asset load failed")
+	end
+
+	strip_physics(source)
+	self.bin:add(source)
+
+	local replacements = {}
+	for _, child in ipairs(source:GetChildren()) do
+		replacements[child.Name:lower()] = child
+	end
+
+	local applied = {}
+
+	self.bin:add(function()
+		for handle, entry in pairs(applied) do
+			if entry.clone then
+				entry.clone:Destroy()
+			end
+			if handle and handle.Parent then
+				pcall(function()
+					handle.Transparency = entry.transparency or 0
+				end)
+			end
+		end
+	end)
+
+	local function dress(item)
+		if not item or not item.Parent then
+			return
+		end
+
+		local replacement = replacements[item.Name:lower()]
+		if not replacement then
+			return
+		end
+
+		local handle = item:FindFirstChild("Handle")
+		if not handle or not handle:IsA("BasePart") or applied[handle] then
+			return
+		end
+
+		local clone = replacement:Clone()
+		strip_physics(clone)
+
+		local anchor = clone:IsA("Model") and clone.PrimaryPart or clone
+		if not anchor then
+			clone:Destroy()
+			return
+		end
+
+		clone.Parent = item
+		anchor.Anchored = false
+		anchor.CFrame = handle.CFrame * offset_for(item.Name) * CFrame.Angles(0, math.rad(-50), 0)
+		anchor.Size = anchor.Size * self:get("scale")
+
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = anchor
+		weld.Part1 = handle
+		weld.Parent = anchor
+
+		applied[handle] = {clone = clone, transparency = handle.Transparency}
+		handle.Transparency = 1
+	end
+
+	-- the viewmodel is rebuilt on respawn, so it is watched rather than grabbed
+	local function bind(viewmodel)
+		if not viewmodel then
+			return
+		end
+		for _, child in ipairs(viewmodel:GetChildren()) do
+			task.spawn(dress, child)
+		end
+		self.bin:add(viewmodel.ChildAdded:Connect(function(child)
+			task.wait(0.1)
+			dress(child)
+		end))
+	end
+
+	local camera = workspace.CurrentCamera
+	if camera then
+		bind(camera:FindFirstChild("Viewmodel"))
+		self.bin:add(camera.ChildAdded:Connect(function(child)
+			if child.Name == "Viewmodel" then
+				bind(child)
+			end
+		end))
+	end
+end
+
 -- crosshair
 
 local crosshair = render:module{name = "crosshair", description = "static crosshair at screen center"}
