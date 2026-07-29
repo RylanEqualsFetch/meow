@@ -18,30 +18,75 @@ local reach
 -- kill aura
 
 local aura = combat:module{name = "kill aura", description = "swings at everything in range"}
-aura:dropdown{name = "mode", values = {"legit", "rage"}, default = "legit"}
+aura:slider{name = "range", min = 5, max = 40, default = 18, decimals = 1, suffix = " studs"}
 aura:slider{name = "swings", min = 1, max = 20, default = 12, suffix = " cps"}
 aura:slider{name = "targets", min = 1, max = 6, default = 3}
+aura:slider{name = "angle", min = 30, max = 360, default = 360, suffix = " deg"}
 aura:toggle{name = "silent", default = true}
-aura:toggle{name = "hold weapon only", default = false}
+aura:toggle{name = "wall check", default = false}
+aura:toggle{name = "team check", default = true}
 
 aura.on_enable = function(self)
-	if not bedwars.ready() then
-		notify.push("kill aura needs the bedwars sword controller")
-		error("sword controller not found")
+	if not bedwars.attack_remote() and not bedwars.ready() then
+		notify.push("kill aura found no swing remote, run debug info")
+		error("no swing path")
 	end
-
 	self.next_swing = 0
+end
 
-	-- the spoof is installed once and only does anything while a swing is being
-	-- sent, so the hand reads normally the rest of the time
-	if self:get("silent") and not bedwars.install_hand_spoof() then
-		notify.push("kill aura could not hook the hand item, swinging normally")
+-- everything alive and hostile inside the range, nearest first
+local function aura_targets(self, range)
+	local me = util.local_player()
+	local my_root = util.root()
+	local out = {}
+	if not my_root then
+		return out
 	end
 
-	self.bin:add(function()
-		bedwars.set_hand_spoof(nil)
-		bedwars.remove_hand_spoof()
+	local facing = my_root.CFrame.LookVector * Vector3.new(1, 0, 1)
+	local limit_angle = math.rad(self:get("angle")) / 2
+
+	for _, player in ipairs(players:GetPlayers()) do
+		if player ~= me and util.alive(player) then
+			if not (self:get("team check") and util.same_team(player)) then
+				local character = util.character(player)
+				local part = character and (character.PrimaryPart or character:FindFirstChild("HumanoidRootPart"))
+				if part then
+					local delta = part.Position - my_root.Position
+					local distance = delta.Magnitude
+					if distance <= range then
+						local flat = delta * Vector3.new(1, 0, 1)
+						local within = true
+
+						if self:get("angle") < 360 and flat.Magnitude > 0 and facing.Magnitude > 0 then
+							local dot = facing.Unit:Dot(flat.Unit)
+							within = math.acos(math.clamp(dot, -1, 1)) <= limit_angle
+						end
+
+						if within and self:get("wall check") then
+							local params = RaycastParams.new()
+							params.FilterType = Enum.RaycastFilterType.Exclude
+							params.FilterDescendantsInstances = {util.character(), workspace.CurrentCamera}
+							local blocked = workspace:Raycast(my_root.Position, delta, params)
+							if blocked and blocked.Instance and not blocked.Instance:IsDescendantOf(character) then
+								within = false
+							end
+						end
+
+						if within then
+							table.insert(out, {character = character, distance = distance})
+						end
+					end
+				end
+			end
+		end
+	end
+
+	table.sort(out, function(a, b)
+		return a.distance < b.distance
 	end)
+
+	return out
 end
 
 aura.on_tick = function(self)
@@ -50,57 +95,42 @@ aura.on_tick = function(self)
 		return
 	end
 
-	local silent = self:get("silent")
+	-- the weapon travels in the payload, so a silent hit needs no equip at all
+	local weapon
+	if self:get("silent") then
+		weapon = bedwars.best_sword()
+	end
+	if not weapon then
+		local held = bedwars.held_tool()
+		weapon = bedwars.is_sword(held) and held or bedwars.best_sword()
+	end
 
-	-- holding the weapon only matters when the spoof is off
-	if not silent and self:get("hold weapon only") and not bedwars.hand_item() then
+	if not weapon then
+		self.next_swing = now + 0.25
 		return
 	end
 
-	local range = reach.range_studs() or bedwars.attack_range()
-
-	local targets = {}
-	if self:get("mode") == "legit" then
-		local target = bedwars.target_in_range(range)
-		if target then
-			targets[1] = target
-		end
-	else
-		local found = bedwars.entities_in_range(range)
-		local limit = math.min(#found, self:get("targets"))
-		for index = 1, limit do
-			targets[index] = found[index].entity
-		end
-	end
-
-	if #targets == 0 then
+	local found = aura_targets(self, self:get("range"))
+	if #found == 0 then
 		self.next_swing = now + 0.05
 		return
 	end
 
-	-- point the hand at the sword for the swing itself, then put it straight back
-	local spoofed = false
-	if silent then
-		local held = bedwars.held_tool()
-		if not bedwars.is_sword(held) then
-			local sword = bedwars.best_sword()
-			if sword then
-				bedwars.install_hand_spoof()
-				bedwars.set_hand_spoof(sword)
-				spoofed = true
-			end
-		end
-	end
-
+	local limit = math.min(#found, self:get("targets"))
 	local swung = false
-	for _, target in ipairs(targets) do
-		if bedwars.attack(target) then
+
+	for index = 1, limit do
+		if bedwars.swing_at(found[index].character, weapon) then
 			swung = true
 		end
 	end
 
-	if spoofed then
-		bedwars.set_hand_spoof(nil)
+	-- no remote available, fall back to the controller path
+	if not swung then
+		local target = bedwars.target_in_range(self:get("range"))
+		if target then
+			swung = bedwars.attack(target)
+		end
 	end
 
 	if swung then
@@ -117,7 +147,7 @@ end
 
 local base_reach = 14.4
 
-reach = combat:module{name = "reach", description = "extends attack reach"}
+reach = combat:module{name = "reach", description = "extends reach on your own clicks"}
 reach:slider{name = "range", min = 0, max = 18, default = 14, decimals = 1, suffix = " studs"}
 
 local sword_ranges = {}

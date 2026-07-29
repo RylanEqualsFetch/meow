@@ -533,6 +533,12 @@ function bedwars.item_meta()
 	local exported = require_instance(module)
 	local getter = exported and exported.getItemMeta
 
+	if type(getter) ~= "function" then
+		-- the path moves between updates, fall back to the module by name
+		local searched = search_module_cached("item-meta")
+		getter = searched and searched.getItemMeta
+	end
+
 	if type(getter) == "function" then
 		local ok, value = pcall(debug.getupvalue, getter, 1)
 		if ok and type(value) == "table" then
@@ -600,6 +606,13 @@ function bedwars.remotes_client()
 
 	local exported = require_instance(dig(replicated, "TS", "remotes"))
 	local value = exported and exported.default and exported.default.Client
+
+	-- the path moves between updates, fall back to the module by name
+	if type(value) ~= "table" then
+		local searched = search_module_cached("remotes")
+		value = searched and searched.default and searched.default.Client
+	end
+
 	return remember("remotes_client", type(value) == "table" and value or nil)
 end
 
@@ -755,18 +768,26 @@ function bedwars.is_sword(tool)
 	if not tool then
 		return false
 	end
+
 	local meta = bedwars.item_meta()
 	local entry = meta and meta[tool.Name]
-	return type(entry) == "table" and type(entry.sword) == "table"
+	if type(entry) == "table" and type(entry.sword) == "table" then
+		return true
+	end
+
+	-- the meta is not always reachable, the name is a good enough second pass
+	local lower = tool.Name:lower()
+	return lower:find("sword", 1, true) ~= nil or lower:find("scythe", 1, true) ~= nil
 end
 
 -- the hardest hitting sword you are carrying, hand or backpack
 function bedwars.best_sword()
 	local character = util.character()
-	local meta = bedwars.item_meta()
-	if not character or not meta then
+	if not character then
 		return nil
 	end
+
+	local meta = bedwars.item_meta()
 
 	local player = players.LocalPlayer
 	local containers = {character}
@@ -780,12 +801,18 @@ function bedwars.best_sword()
 	for _, container in ipairs(containers) do
 		for _, tool in ipairs(container:GetChildren()) do
 			if tool:IsA("Tool") then
-				local entry = meta[tool.Name]
+				local entry = meta and meta[tool.Name]
 				local sword = type(entry) == "table" and entry.sword or nil
+
 				if type(sword) == "table" then
 					local damage = tonumber(sword.damage) or tonumber(sword.attackDamage) or 1
 					if not best_damage or damage > best_damage then
 						best, best_damage = tool, damage
+					end
+				elseif bedwars.is_sword(tool) then
+					-- no meta entry, keep it as a candidate with the lowest score
+					if not best_damage then
+						best, best_damage = tool, 0
 					end
 				end
 			end
@@ -794,6 +821,100 @@ function bedwars.best_sword()
 
 	return best
 end
+
+-- the swing remote
+-- vape never calls attackEntity for the aura, it fires this remote itself. that
+-- matters twice over. the weapon is a field in the payload, which is what makes
+-- a silent hit silent, and the position the server range checks is one we supply
+
+local max_server_reach = 14.399
+
+function bedwars.attack_remote()
+	local hit = fresh("attack_remote")
+	if hit then
+		return hit
+	end
+	if not ready_to_retry("attack_remote") then
+		return nil
+	end
+
+	-- the net wrapper first, it is the same object the game itself fires
+	local client = bedwars.remotes_client()
+	if client then
+		local ok, wrapper = pcall(function()
+			return client:Get("SwordHit")
+		end)
+		if ok and type(wrapper) == "table" and typeof(wrapper.instance) == "Instance" then
+			return remember("attack_remote", wrapper.instance)
+		end
+	end
+
+	local found
+	pcall(function()
+		for _, inst in ipairs(replicated:GetDescendants()) do
+			if inst:IsA("RemoteEvent") and inst.Name == "SwordHit" then
+				found = inst
+				break
+			end
+		end
+	end)
+
+	return remember("attack_remote", found)
+end
+
+-- fires one hit as weapon, from a claimed position the server will accept
+function bedwars.swing_at(character, weapon)
+	local remote = bedwars.attack_remote()
+	local my_root = util.root()
+	if not remote or not character or not weapon or not my_root then
+		return false
+	end
+
+	local target_root = character.PrimaryPart or character:FindFirstChild("HumanoidRootPart")
+	if not target_root then
+		return false
+	end
+
+	local self_position = my_root.Position
+	local delta = target_root.Position - self_position
+	local distance = delta.Magnitude
+	if distance <= 0 then
+		return false
+	end
+
+	local direction = CFrame.lookAt(self_position, target_root.Position).LookVector
+
+	-- slide the claimed origin toward the target until the distance it reports
+	-- sits inside the servers limit, the real gap can be anything
+	local origin = self_position + direction * math.max(distance - max_server_reach, 0)
+
+	local controller = bedwars.sword()
+	if controller then
+		pcall(function()
+			controller.lastAttack = workspace:GetServerTimeNow()
+		end)
+	end
+
+	local ok = pcall(function()
+		remote:FireServer({
+			weapon = weapon,
+			chargedAttack = {chargeRatio = 0},
+			entityInstance = character,
+			validate = {
+				raycast = {
+					cameraPosition = {value = origin},
+					cursorDirection = {value = direction},
+				},
+				targetPosition = {value = target_root.Position},
+				selfPosition = {value = origin},
+			},
+		})
+	end)
+
+	return ok
+end
+
+bedwars.max_server_reach = max_server_reach
 
 -- hand spoofing
 -- attackEntity and swingSwordInRegion both start by asking the sword controller
@@ -879,6 +1000,7 @@ function bedwars.report()
 		{"sync events", bedwars.sync_events},
 		{"net client", bedwars.remotes_client},
 		{"block remotes", bedwars.block_remotes},
+		{"swing remote", bedwars.attack_remote},
 		{"block placer", bedwars.placer},
 		{"entity util", bedwars.entity_util},
 		{"world util", bedwars.world_util},
