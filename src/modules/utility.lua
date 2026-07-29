@@ -416,4 +416,275 @@ join_link.on_enable = function(self)
 	end)
 end
 
+-- animation player, plays one animation or ugc emote and can hold it still
+
+local anim_player = utility:module{name = "animation player", description = "plays an animation or ugc emote"}
+anim_player:input{name = "asset id", placeholder = "animation or emote id"}
+anim_player:slider{name = "speed", min = 0, max = 3, default = 1, decimals = 2}
+anim_player:slider{name = "time", min = 0, max = 100, default = 0, suffix = " pct"}
+anim_player:toggle{name = "freeze", default = false}
+anim_player:toggle{name = "override all", default = true}
+anim_player:dropdown{
+	name = "priority",
+	values = {"action4", "action3", "action2", "action", "movement", "idle", "core"},
+	default = "action4",
+}
+
+local priority_names = {
+	action4 = "Action4",
+	action3 = "Action3",
+	action2 = "Action2",
+	action = "Action",
+	movement = "Movement",
+	idle = "Idle",
+	core = "Core",
+}
+
+-- a ugc emote asset is an Animation instance, loading it gives the real id
+local function resolve_animation_id(raw)
+	local id = tostring(raw or ""):match("%d+")
+	if not id then
+		return nil
+	end
+
+	local ok, objects = pcall(function()
+		return game:GetObjects("rbxassetid://" .. id)
+	end)
+	if ok and type(objects) == "table" and objects[1] then
+		local inner = objects[1]
+		if inner:IsA("Animation") and inner.AnimationId ~= "" then
+			local nested = tostring(inner.AnimationId):match("%d+")
+			if nested then
+				return "rbxassetid://" .. nested
+			end
+		end
+	end
+
+	return "rbxassetid://" .. id
+end
+
+anim_player.on_enable = function(self)
+	local id = resolve_animation_id(self:get("asset id"))
+	if not id then
+		notify.push("animation player needs an asset id")
+		error("no asset id")
+	end
+
+	local asset = Instance.new("Animation")
+	asset.AnimationId = id
+	self.bin:add(asset)
+
+	local track
+	local player = util.local_player()
+
+	local function animator_of(character)
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if not humanoid then
+			return nil
+		end
+		return humanoid:FindFirstChildOfClass("Animator") or humanoid:WaitForChild("Animator", 3)
+	end
+
+	local function play(character)
+		local animator = animator_of(character)
+		if not animator then
+			return
+		end
+
+		if track then
+			pcall(function()
+				track:Stop(0)
+			end)
+			track = nil
+		end
+
+		local ok, loaded = pcall(function()
+			return animator:LoadAnimation(asset)
+		end)
+		if not ok or not loaded then
+			notify.push("animation player could not load that id")
+			return
+		end
+
+		track = loaded
+		track.Priority = Enum.AnimationPriority[priority_names[self:get("priority")] or "Action4"]
+		track.Looped = true
+		track:Play(0.1)
+		track:AdjustSpeed(self:get("freeze") and 0 or self:get("speed"))
+	end
+
+	if util.character() then
+		play(util.character())
+	end
+	self.bin:add(player.CharacterAdded:Connect(function(character)
+		task.wait(0.6)
+		play(character)
+	end))
+
+	self.bin:add(self.options["speed"]:listen(function(value)
+		if track and not self:get("freeze") then
+			track:AdjustSpeed(value)
+		end
+	end))
+
+	self.bin:add(self.options["priority"]:listen(function(value)
+		if track then
+			track.Priority = Enum.AnimationPriority[priority_names[value] or "Action4"]
+		end
+	end))
+
+	self.bin:add(self.options["asset id"]:listen(function()
+		if self.enabled then
+			self:set_enabled(false)
+			task.defer(function()
+				self:set_enabled(true)
+			end)
+		end
+	end))
+
+	self.bin:add(function()
+		if track then
+			pcall(function()
+				track:Stop(0)
+			end)
+			track = nil
+		end
+	end)
+
+	-- the frame loop holds the pose, applies the scrub and clears everything else
+	self.bin:add(run_service.RenderStepped:Connect(function()
+		if not track or not track.IsPlaying then
+			if track then
+				pcall(function()
+					track:Play(0)
+				end)
+			end
+			return
+		end
+
+		local frozen = self:get("freeze")
+		local length = track.Length
+
+		if frozen then
+			track:AdjustSpeed(0)
+			if length > 0 then
+				track.TimePosition = util.clamp(self:get("time") / 100, 0, 1) * length
+			end
+		end
+
+		if self:get("override all") then
+			local animator = animator_of(util.character())
+			if animator then
+				local ok, playing = pcall(function()
+					return animator:GetPlayingAnimationTracks()
+				end)
+				if ok and type(playing) == "table" then
+					for _, other in ipairs(playing) do
+						if other ~= track then
+							pcall(function()
+								other:Stop(0)
+							end)
+						end
+					end
+				end
+			end
+		end
+	end))
+end
+
+anim_player.on_tick = function(self)
+	-- the scrub slider also works while running, it just does not stick
+	if not self:get("freeze") then
+		return
+	end
+end
+
+-- no place delay, lifts the block placement rate cap
+
+local no_place_delay = utility:module{name = "no place delay", description = "removes the block place cap"}
+no_place_delay:slider{name = "blocks per second", min = 12, max = 60, default = 40}
+
+no_place_delay.on_enable = function(self)
+	local constants = bedwars.cps_constants()
+	if not constants then
+		notify.push("no place delay could not read the cps constants")
+		error("cps constants not found")
+	end
+
+	local original = constants.BLOCK_PLACE_CPS
+	constants.BLOCK_PLACE_CPS = self:get("blocks per second")
+
+	self.bin:add(self.options["blocks per second"]:listen(function(value)
+		local current = bedwars.cps_constants()
+		if current then
+			current.BLOCK_PLACE_CPS = value
+		end
+	end))
+
+	self.bin:add(function()
+		local current = bedwars.cps_constants()
+		if current then
+			current.BLOCK_PLACE_CPS = original or 12
+		end
+	end)
+end
+
+-- scaffold, bridges under your feet through the games own block placer
+
+local scaffold = utility:module{name = "scaffold", description = "places blocks under you"}
+scaffold:slider{name = "blocks per second", min = 4, max = 30, default = 14}
+scaffold:toggle{name = "only when falling", default = false}
+scaffold:input{name = "block", placeholder = "leave blank for any wool"}
+
+scaffold.on_enable = function(self)
+	if not bedwars.placer() then
+		notify.push("scaffold could not reach the block placer")
+		error("block placer not found")
+	end
+	self.next_place = 0
+end
+
+scaffold.on_tick = function(self)
+	local root = util.root()
+	local humanoid = util.humanoid()
+	if not root or not humanoid then
+		return
+	end
+
+	local now = os.clock()
+	if now < (self.next_place or 0) then
+		return
+	end
+
+	if self:get("only when falling") and root.AssemblyLinearVelocity.Y > -1 then
+		return
+	end
+
+	-- one block below the feet, the placer rounds it onto the block grid
+	local feet = root.Position - Vector3.new(0, humanoid.HipHeight + 1.5, 0)
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {root.Parent}
+
+	-- nothing to do when there is already something solid under us
+	if workspace:Raycast(root.Position, Vector3.new(0, -(humanoid.HipHeight + 2.5), 0), params) then
+		return
+	end
+
+	local wanted = self:get("block")
+	if wanted == "" then
+		wanted = bedwars.hotbar_block()
+	end
+	if not wanted then
+		return
+	end
+
+	if bedwars.place_block(feet, wanted) then
+		self.next_place = now + 1 / math.max(self:get("blocks per second"), 1)
+	else
+		self.next_place = now + 0.1
+	end
+end
+
 return true

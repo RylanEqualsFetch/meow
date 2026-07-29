@@ -69,42 +69,71 @@ aura.on_tick = function(self)
 end
 
 -- reach
--- attackEntity refuses anything past attackRange plus two studs, so the range
--- has to be raised on the weapon meta clone the client builds before each swing.
--- the games own dagger effect pushes that same field to 6.5 blocks
+-- vape writes the shared combat constant the client checks against, which is
+-- simpler and more reliable than hooking the swing event
 
-reach = combat:module{name = "reach", description = "raises the swing range on the weapon"}
-reach:slider{name = "blocks", min = 4.2, max = 6.5, default = 6, decimals = 1}
+local base_reach = 14.4
+
+reach = combat:module{name = "reach", description = "extends attack reach"}
+reach:slider{name = "range", min = 0, max = 18, default = 14, decimals = 1, suffix = " studs"}
+
+local function push_reach(value)
+	local constants = bedwars.combat_constant()
+	if not constants then
+		return false
+	end
+	constants.RAYCAST_SWORD_CHARACTER_DISTANCE = value
+	return true
+end
 
 reach.on_enable = function(self)
-	if not bedwars.sync_events() then
-		notify.push("reach needs the bedwars sync events")
-		error("client sync events not found")
+	if not bedwars.combat_constant() then
+		notify.push("reach could not read the combat constants")
+		error("combat constant not found")
 	end
 
-	local handle = bedwars.hook_sword_meta(function(meta)
-		local sword = meta.sword
-		if type(sword) ~= "table" then
-			return
-		end
-		sword.attackRange = self:get("blocks") * bedwars.block_studs
-	end)
+	push_reach(self:get("range") + 2)
 
-	if not handle then
-		notify.push("reach could not hook the swing event")
-		error("hook failed")
-	end
+	self.bin:add(self.options["range"]:listen(function(value)
+		push_reach(value + 2)
+	end))
 
 	self.bin:add(function()
-		bedwars.release_hook(handle)
+		push_reach(base_reach)
 	end)
 end
 
 function reach.range_studs()
 	if reach.enabled then
-		return reach:get("blocks") * bedwars.block_studs
+		return reach:get("range") + 2
 	end
 	return nil
+end
+
+-- no click delay, drops the swing rate cap the client enforces
+
+local no_click_delay = combat:module{name = "no click delay", description = "removes the cps cap"}
+
+no_click_delay.on_enable = function(self)
+	local sword = bedwars.sword()
+	if not sword then
+		notify.push("no click delay needs the bedwars sword controller")
+		error("sword controller not found")
+	end
+
+	local original = sword.isClickingTooFast
+	sword.isClickingTooFast = function(controller)
+		controller.lastAttackTime = 0
+		controller.lastSwing = os.clock()
+		return false
+	end
+
+	self.bin:add(function()
+		local current = bedwars.sword()
+		if current then
+			current.isClickingTooFast = original
+		end
+	end)
 end
 
 -- trigger bot

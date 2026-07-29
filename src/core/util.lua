@@ -322,6 +322,16 @@ function util.drag(frame, handle, bin, opts)
 			or input.UserInputType == Enum.UserInputType.Touch
 	end
 
+	-- the direct event needs no coordinate math at all, it is the reliable path
+	bin:add(handle.InputBegan:Connect(function(input)
+		if is_press(input) then
+			arm()
+		end
+	end))
+
+	-- the global pass catches presses that a child button swallowed. the input
+	-- position and absolute position spaces differ by the top bar inset on some
+	-- setups, so both readings are accepted rather than guessing which applies
 	bin:add(user_input.InputBegan:Connect(function(input)
 		if not is_press(input) then
 			return
@@ -330,11 +340,15 @@ function util.drag(frame, handle, bin, opts)
 			return
 		end
 
-		local point = input.Position + offset()
-		if not inside(handle, point) or blocked(point) then
+		local raw = Vector2.new(input.Position.X, input.Position.Y)
+		local shifted = raw + offset()
+
+		if blocked(raw) or blocked(shifted) then
 			return
 		end
-		arm()
+		if inside(handle, raw) or inside(handle, shifted) then
+			arm()
+		end
 	end))
 
 	bin:add(user_input.InputEnded:Connect(function(input)

@@ -1,7 +1,7 @@
 -- bedwars adapter
--- resolves the games own knit controllers and entity helpers at runtime, so
--- combat goes through the same calls the real client makes instead of guessed
--- remote arguments. every lookup is lazy, cached and wrapped
+-- the module paths and the knit lookup are taken straight from the vape v4
+-- bedwars base, with a name search behind them so an update that moves a module
+-- still resolves. every lookup is lazy, cached and wrapped
 
 local util = meow.load("src/core/util.lua")
 
@@ -11,38 +11,88 @@ local players = util.services.Players
 
 local bedwars = {}
 
-local cache = {}
+bedwars.block_studs = 3
 
--- a miss is only remembered briefly, the client can be injected before the game
--- has required its own modules and a permanent negative would never recover
+local cache = {}
 local misses = {}
 local retry_after = 2
 
-local function loaded_modules()
-	local fn = getloadedmodules
-	if type(fn) ~= "function" then
-		return nil
-	end
-	local ok, list = pcall(fn)
-	if ok and type(list) == "table" then
-		return list
+local function fresh(name)
+	local hit = cache[name]
+	if hit ~= nil then
+		return hit
 	end
 	return nil
 end
 
--- finds a module by instance name, preferring one the game already required
-local function find_module(name)
-	local modules = loaded_modules()
-	if modules then
-		for _, module in ipairs(modules) do
-			if module.Name == name and module:IsDescendantOf(game) then
-				return module
+local function ready_to_retry(name)
+	local missed_at = misses[name]
+	return not missed_at or os.clock() - missed_at >= retry_after
+end
+
+local function remember(name, value)
+	if value then
+		cache[name] = value
+		misses[name] = nil
+	else
+		misses[name] = os.clock()
+	end
+	return value
+end
+
+function bedwars.forget()
+	cache = {}
+	misses = {}
+	bedwars.placer_instance = nil
+end
+
+-- walks a path off an instance, every step guarded
+local function dig(root, ...)
+	local node = root
+	for _, step in ipairs({...}) do
+		if not node then
+			return nil
+		end
+		local ok, child = pcall(function()
+			return node[step]
+		end)
+		if not ok then
+			return nil
+		end
+		node = child
+	end
+	return node
+end
+
+local function require_instance(inst)
+	if not inst then
+		return nil
+	end
+	local ok, result = pcall(require, inst)
+	if ok and type(result) == "table" then
+		return result
+	end
+	return nil
+end
+
+local function search_module(name)
+	local fn = getloadedmodules
+	if type(fn) == "function" then
+		local ok, list = pcall(fn)
+		if ok and type(list) == "table" then
+			for _, module in ipairs(list) do
+				if module.Name == name then
+					local value = require_instance(module)
+					if value then
+						return value
+					end
+				end
 			end
 		end
 	end
 
 	local found
-	local ok = pcall(function()
+	pcall(function()
 		for _, inst in ipairs(replicated:GetDescendants()) do
 			if inst:IsA("ModuleScript") and inst.Name == name then
 				found = inst
@@ -50,52 +100,43 @@ local function find_module(name)
 			end
 		end
 	end)
-
-	if ok then
-		return found
-	end
-	return nil
+	return require_instance(found)
 end
 
-local function require_module(name)
-	local hit = cache[name]
+-- knit hands its controllers out through an upvalue on setup, same as vape does
+function bedwars.knit()
+	local hit = fresh("knit")
 	if hit then
 		return hit
 	end
-
-	local missed_at = misses[name]
-	if missed_at and os.clock() - missed_at < retry_after then
+	if not ready_to_retry("knit") then
 		return nil
 	end
 
-	local module = find_module(name)
-	if not module then
-		misses[name] = os.clock()
-		return nil
+	local player = players.LocalPlayer
+	local module = dig(player, "PlayerScripts", "TS", "knit")
+
+	if module then
+		local ok, exported = pcall(require, module)
+		if ok and type(exported) == "table" then
+			if type(exported.setup) == "function" then
+				local got, knit = pcall(debug.getupvalue, exported.setup, 9)
+				if got and type(knit) == "table" and type(knit.Controllers) == "table" then
+					return remember("knit", knit)
+				end
+			end
+			if type(exported.Controllers) == "table" then
+				return remember("knit", exported)
+			end
+		end
 	end
 
-	local ok, result = pcall(require, module)
-	if not ok or type(result) ~= "table" then
-		misses[name] = os.clock()
-		return nil
+	local fallback = search_module("KnitClient")
+	if type(fallback) == "table" and type(fallback.Controllers) == "table" then
+		return remember("knit", fallback)
 	end
 
-	cache[name] = result
-	misses[name] = nil
-	return result
-end
-
-function bedwars.forget()
-	cache = {}
-	misses = {}
-end
-
-function bedwars.knit()
-	local knit = require_module("KnitClient")
-	if knit and type(knit.Controllers) == "table" then
-		return knit
-	end
-	return nil
+	return remember("knit", nil)
 end
 
 function bedwars.controller(name)
@@ -116,43 +157,179 @@ function bedwars.sword()
 	return bedwars.controller("SwordController")
 end
 
-function bedwars.entity_util()
-	local module = require_module("entity-util")
-	if not module then
-		return nil
-	end
-	-- the util is exported either directly or under default
-	if type(module.getLocalPlayerEntity) == "function" then
-		return module
-	end
-	if type(module.default) == "table" and type(module.default.getLocalPlayerEntity) == "function" then
-		return module.default
-	end
-	return nil
-end
-
-function bedwars.world_util()
-	local module = require_module("game-world-util")
-	if not module then
-		return nil
-	end
-	if type(module.getEntitiesWithinBox) == "function" then
-		return module
-	end
-	if type(module.default) == "table" and type(module.default.getEntitiesWithinBox) == "function" then
-		return module.default
-	end
-	return nil
-end
-
--- true once the knit client and the sword controller are both reachable
 function bedwars.ready()
 	return bedwars.sword() ~= nil
 end
 
+local function resolve_table(key, path, field, search_name)
+	local hit = fresh(key)
+	if hit then
+		return hit
+	end
+	if not ready_to_retry(key) then
+		return nil
+	end
+
+	local exported = require_instance(dig(replicated, table.unpack(path)))
+	local value = exported and exported[field]
+
+	if type(value) ~= "table" and search_name then
+		local searched = search_module(search_name)
+		value = searched and searched[field]
+	end
+
+	return remember(key, type(value) == "table" and value or nil)
+end
+
+-- the shared table the client reads its reach limits from
+function bedwars.combat_constant()
+	return resolve_table(
+		"combat_constant",
+		{"TS", "combat", "combat-constant"},
+		"CombatConstant",
+		"combat-constant"
+	)
+end
+
+-- block placement rate lives here, BLOCK_PLACE_CPS is the cap
+function bedwars.cps_constants()
+	return resolve_table(
+		"cps_constants",
+		{"TS", "shared-constants"},
+		"CpsConstants",
+		"shared-constants"
+	)
+end
+
+function bedwars.block_controller()
+	return resolve_table(
+		"block_controller",
+		{"rbxts_include", "node_modules", "@easy-games", "block-engine", "out"},
+		"BlockEngine"
+	)
+end
+
+function bedwars.block_placer_class()
+	return resolve_table(
+		"block_placer",
+		{"rbxts_include", "node_modules", "@easy-games", "block-engine", "out", "client", "placement", "block-placer"},
+		"BlockPlacer",
+		"block-placer"
+	)
+end
+
+function bedwars.inventory_util()
+	return resolve_table(
+		"inventory_util",
+		{"TS", "inventory", "inventory-util"},
+		"InventoryUtil",
+		"inventory-util"
+	)
+end
+
+function bedwars.block_engine()
+	local hit = fresh("block_engine")
+	if hit then
+		return hit
+	end
+	if not ready_to_retry("block_engine") then
+		return nil
+	end
+
+	local player = players.LocalPlayer
+	local exported = require_instance(
+		dig(player, "PlayerScripts", "TS", "lib", "block-engine", "client-block-engine")
+	)
+	local value = exported and exported.ClientBlockEngine
+
+	if type(value) ~= "table" then
+		local searched = search_module("client-block-engine")
+		value = searched and searched.ClientBlockEngine
+	end
+
+	return remember("block_engine", type(value) == "table" and value or nil)
+end
+
+-- a placer bound to the client block engine, same construction vape uses
+function bedwars.placer()
+	if bedwars.placer_instance then
+		return bedwars.placer_instance
+	end
+
+	local class = bedwars.block_placer_class()
+	local engine = bedwars.block_engine()
+	if not class or not engine then
+		return nil
+	end
+
+	local ok, instance = pcall(function()
+		return class.new(engine, "wool_white")
+	end)
+	if not ok or type(instance) ~= "table" then
+		return nil
+	end
+
+	bedwars.placer_instance = instance
+	return instance
+end
+
+function bedwars.place_block(position, item)
+	local placer = bedwars.placer()
+	local controller = bedwars.block_controller()
+	if not placer or not controller then
+		return false
+	end
+
+	local ok = pcall(function()
+		if item then
+			placer.blockType = item
+		end
+		placer:placeBlock(controller:getBlockPosition(position))
+	end)
+	return ok
+end
+
+-- the first block stack sitting in the hotbar
+function bedwars.hotbar_block()
+	local inventory_util = bedwars.inventory_util()
+	if not inventory_util then
+		return nil
+	end
+
+	local ok, inventory = pcall(function()
+		return inventory_util.getInventory(players.LocalPlayer)
+	end)
+	if not ok or type(inventory) ~= "table" then
+		return nil
+	end
+
+	local hotbar = inventory.hotbar or inventory.items
+	if type(hotbar) ~= "table" then
+		return nil
+	end
+
+	for _, item in pairs(hotbar) do
+		if type(item) == "table" and type(item.itemType) == "string" then
+			local name = item.itemType
+			if name:find("wool", 1, true)
+				or name:find("plank", 1, true)
+				or name:find("brick", 1, true)
+				or name:find("block", 1, true) then
+				return name
+			end
+		end
+	end
+
+	return nil
+end
+
 function bedwars.local_entity()
-	local entity_util = bedwars.entity_util()
-	if not entity_util then
+	local module = search_module("entity-util")
+	local entity_util = module
+	if module and type(module.getLocalPlayerEntity) ~= "function" and type(module.default) == "table" then
+		entity_util = module.default
+	end
+	if not entity_util or type(entity_util.getLocalPlayerEntity) ~= "function" then
 		return nil
 	end
 	local ok, entity = pcall(function()
@@ -164,8 +341,6 @@ function bedwars.local_entity()
 	return nil
 end
 
--- the games own target picker, it already honours teams, line of sight and
--- match state. range is ours, which is what makes reach work
 function bedwars.target_in_range(range, charge)
 	local sword = bedwars.sword()
 	if not sword then
@@ -205,17 +380,6 @@ function bedwars.hand_item()
 	return nil
 end
 
-function bedwars.can_attack(entity)
-	local mine = bedwars.local_entity()
-	if not mine or not entity then
-		return false
-	end
-	local ok, result = pcall(function()
-		return mine:canAttack(entity)
-	end)
-	return ok and result == true
-end
-
 function bedwars.entity_instance(entity)
 	if not entity then
 		return nil
@@ -229,7 +393,31 @@ function bedwars.entity_instance(entity)
 	return nil
 end
 
--- every attackable entity inside a box centred on the player
+function bedwars.can_attack(entity)
+	local mine = bedwars.local_entity()
+	if not mine or not entity then
+		return false
+	end
+	local ok, result = pcall(function()
+		return mine:canAttack(entity)
+	end)
+	return ok and result == true
+end
+
+function bedwars.world_util()
+	local module = search_module("game-world-util")
+	if not module then
+		return nil
+	end
+	if type(module.getEntitiesWithinBox) == "function" then
+		return module
+	end
+	if type(module.default) == "table" and type(module.default.getEntitiesWithinBox) == "function" then
+		return module.default
+	end
+	return nil
+end
+
 function bedwars.entities_in_range(range)
 	local world = bedwars.world_util()
 	local character = util.character()
@@ -264,79 +452,13 @@ function bedwars.entities_in_range(range)
 	return out
 end
 
--- the client fires BeforeSwordSwing with a mutable weapon meta clone before every
--- swing, and attackEntity then refuses any target past attackRange plus two
--- studs. raising the range on that clone is exactly how the games own dagger
--- effect extends reach, so reach rides the same hook
-function bedwars.sync_events()
-	local module = require_module("client-sync-events")
-	if not module then
-		return nil
-	end
-	if type(module.BeforeSwordSwing) == "table" then
-		return module
-	end
-	if type(module.default) == "table" and type(module.default.BeforeSwordSwing) == "table" then
-		return module.default
-	end
-	return nil
-end
-
-bedwars.block_studs = 3
-
-function bedwars.hook_sword_meta(fn)
-	local events = bedwars.sync_events()
-	if not events then
-		return nil
-	end
-
-	local ok, handle = pcall(function()
-		return events.BeforeSwordSwing:connect(function(name, payload)
-			if type(payload) == "table" and type(payload.weaponMetaClone) == "table" then
-				pcall(fn, payload.weaponMetaClone, name, payload)
-			end
-		end)
-	end)
-
-	if not ok then
-		return nil
-	end
-	return handle
-end
-
-function bedwars.release_hook(handle)
-	if handle == nil then
-		return
-	end
-	pcall(function()
-		if type(handle) == "function" then
-			handle()
-		elseif type(handle) == "table" then
-			if type(handle.disconnect) == "function" then
-				handle:disconnect()
-			elseif type(handle.Disconnect) == "function" then
-				handle:Disconnect()
-			elseif type(handle.destroy) == "function" then
-				handle:destroy()
-			end
-		end
-	end)
-end
-
--- the sword region the client is currently willing to swing at
+-- the distance the client will currently accept a swing at
 function bedwars.attack_range()
-	local sword = bedwars.sword()
-	if not sword then
-		return 12.6
+	local constants = bedwars.combat_constant()
+	if constants and type(constants.RAYCAST_SWORD_CHARACTER_DISTANCE) == "number" then
+		return constants.RAYCAST_SWORD_CHARACTER_DISTANCE
 	end
-	local ok, item = pcall(function()
-		return sword:getHandItem()
-	end)
-	if not ok or type(item) ~= "table" then
-		return 12.6
-	end
-	-- 4.2 blocks is the games own region constant when a sword has no range set
-	return 4.2 * bedwars.block_studs
+	return 4.8 * bedwars.block_studs
 end
 
 -- beds carry a collection service tag in this game, which beats name matching

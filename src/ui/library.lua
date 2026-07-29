@@ -490,6 +490,57 @@ function controls.color(parent, option, bin)
 	return row
 end
 
+function controls.input(parent, option, bin)
+	local row = new("Frame", {
+		Parent = parent,
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 44),
+	})
+
+	label(row, {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 16),
+		Text = option.name,
+		TextSize = theme.size.tiny,
+		TextColor3 = theme.text_dim,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, "regular")
+
+	local box = new("TextBox", {
+		Parent = row,
+		Position = UDim2.fromOffset(0, 18),
+		Size = UDim2.new(1, 0, 0, 24),
+		BackgroundColor3 = theme.surface_light,
+		BorderSizePixel = 0,
+		Text = tostring(option.value or ""),
+		PlaceholderText = option.placeholder or "",
+		PlaceholderColor3 = theme.text_faint,
+		TextSize = theme.size.tiny,
+		TextColor3 = theme.text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ClearTextOnFocus = false,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, {
+		util.corner(theme.round.chip),
+		util.padding(0, 0, 8, 8),
+	})
+	theme.apply_font(box, "medium")
+
+	-- the box is a no drag zone, typing in it must never move the panel
+	table.insert(drag_guard.zones, box)
+
+	bin:add(box.FocusLost:Connect(function()
+		option:set(box.Text)
+	end))
+	bin:add(option:listen(function(value)
+		if box.Text ~= tostring(value) then
+			box.Text = tostring(value)
+		end
+	end))
+
+	return row
+end
+
 function controls.button(parent, option, bin)
 	local button = new("TextButton", {
 		Parent = parent,

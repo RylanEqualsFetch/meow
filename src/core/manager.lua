@@ -111,6 +111,9 @@ local function add_option(self, kind, def)
 		end
 	elseif kind == "color" then
 		option.value = def.default or Color3.fromRGB(198, 134, 255)
+	elseif kind == "input" then
+		option.value = def.default or ""
+		option.placeholder = def.placeholder or ""
 	elseif kind == "button" then
 		option.value = nil
 		option.action = def.action
@@ -135,6 +138,10 @@ end
 
 function module_mt:color(def)
 	return add_option(self, "color", def)
+end
+
+function module_mt:input(def)
+	return add_option(self, "input", def)
 end
 
 function module_mt:button(def)
