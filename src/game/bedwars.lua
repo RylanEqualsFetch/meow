@@ -822,6 +822,75 @@ function bedwars.best_sword()
 	return best
 end
 
+-- movement modifiers
+-- the sprint controller keeps a modifier list and recomputes moveSpeedMultiplier
+-- from it on every reconcile, then setSpeed does base times that multiplier and
+-- only clamps when maxSpeed is set, which it is not by default. a modifier
+-- carrying constantSpeedMultiplier overrides the whole computed value
+
+function bedwars.sprint_controller()
+	return bedwars.controller("SprintController")
+end
+
+function bedwars.movement_modifiers()
+	local sprint = bedwars.sprint_controller()
+	if not sprint or type(sprint.getMovementStatusModifier) ~= "function" then
+		return nil
+	end
+	local ok, host = pcall(function()
+		return sprint:getMovementStatusModifier()
+	end)
+	if ok and type(host) == "table" then
+		return host
+	end
+	return nil
+end
+
+-- returns a handle, destroy it to take the modifier back off
+function bedwars.add_movement_modifier(properties, priority)
+	local host = bedwars.movement_modifiers()
+	if not host or type(host.addModifier) ~= "function" then
+		return nil
+	end
+
+	local ok, handle = pcall(function()
+		return host:addModifier(properties, priority)
+	end)
+	if ok and handle then
+		return handle
+	end
+	return nil
+end
+
+function bedwars.remove_movement_modifier(handle)
+	if not handle then
+		return
+	end
+	pcall(function()
+		if type(handle.destroy) == "function" then
+			handle:destroy()
+		elseif type(handle.Destroy) == "function" then
+			handle:Destroy()
+		elseif type(handle) == "function" then
+			handle()
+		end
+	end)
+end
+
+function bedwars.local_kit()
+	local player = players.LocalPlayer
+	if not player then
+		return nil
+	end
+	local ok, kit = pcall(function()
+		return player:GetAttribute("Kit")
+	end)
+	if ok and kit ~= nil then
+		return tostring(kit)
+	end
+	return nil
+end
+
 -- the swing remote
 -- vape never calls attackEntity for the aura, it fires this remote itself. that
 -- matters twice over. the weapon is a field in the payload, which is what makes
@@ -1001,6 +1070,8 @@ function bedwars.report()
 		{"net client", bedwars.remotes_client},
 		{"block remotes", bedwars.block_remotes},
 		{"swing remote", bedwars.attack_remote},
+		{"sprint controller", bedwars.sprint_controller},
+		{"movement modifiers", bedwars.movement_modifiers},
 		{"block placer", bedwars.placer},
 		{"entity util", bedwars.entity_util},
 		{"world util", bedwars.world_util},
@@ -1030,6 +1101,14 @@ function bedwars.report()
 	local constants = bedwars.combat_constant()
 	if constants then
 		table.insert(lines, "raycast distance: " .. tostring(constants.RAYCAST_SWORD_CHARACTER_DISTANCE))
+	end
+
+	table.insert(lines, "kit: " .. tostring(bedwars.local_kit()))
+
+	local sprint = bedwars.sprint_controller()
+	if sprint then
+		table.insert(lines, "move multiplier: " .. tostring(sprint.moveSpeedMultiplier)
+			.. ", max speed: " .. tostring(sprint.maxSpeed))
 	end
 
 	local held = bedwars.held_tool()

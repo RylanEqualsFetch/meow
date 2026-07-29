@@ -247,6 +247,97 @@ spider.on_tick = function(self)
 	end
 end
 
+-- kit speed
+-- this drives the games own movement modifier rather than writing WalkSpeed, so
+-- the sprint controller recomputes around it instead of stamping it back. a
+-- modifier with constantSpeedMultiplier replaces the computed multiplier
+-- outright, and setSpeed only clamps when maxSpeed is set, which it is not.
+-- zephyr matters because that kit already stacks large speed bonuses, so the
+-- servers idea of a legal speed for it is far wider than for anything else
+
+local kit_speed = movement:module{name = "kit speed", description = "drives the games movement multiplier"}
+kit_speed:slider{name = "multiplier", min = 1, max = 12, default = 2, decimals = 2}
+kit_speed:toggle{name = "constant override", default = true}
+kit_speed:toggle{name = "zephyr only", default = true}
+kit_speed:toggle{name = "clear speed cap", default = true}
+
+local zephyr_names = {"wind_walker", "windwalker", "zephyr"}
+
+local function on_zephyr()
+	local kit = bedwars.local_kit()
+	if not kit then
+		return false
+	end
+	local lower = kit:lower()
+	for _, name in ipairs(zephyr_names) do
+		if lower:find(name, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+local function build_properties(self)
+	local value = self:get("multiplier")
+	if self:get("constant override") then
+		return {constantSpeedMultiplier = value}
+	end
+	return {moveSpeedMultiplier = value}
+end
+
+kit_speed.on_enable = function(self)
+	if not bedwars.movement_modifiers() then
+		notify.push("kit speed needs the bedwars sprint controller")
+		error("movement modifiers not found")
+	end
+
+	if self:get("zephyr only") and not on_zephyr() then
+		notify.push("kit speed is set to zephyr only and you are on " .. tostring(bedwars.local_kit()))
+		error("wrong kit")
+	end
+
+	local sprint = bedwars.sprint_controller()
+
+	-- setSpeed clamps to maxSpeed when it is set, clearing it lifts the ceiling
+	if self:get("clear speed cap") and sprint then
+		self.saved_max = sprint.maxSpeed
+		pcall(function()
+			sprint.maxSpeed = nil
+		end)
+		self.bin:add(function()
+			local current = bedwars.sprint_controller()
+			if current then
+				pcall(function()
+					current.maxSpeed = self.saved_max
+				end)
+			end
+		end)
+	end
+
+	local handle = bedwars.add_movement_modifier(build_properties(self))
+	if not handle then
+		notify.push("kit speed could not add a movement modifier")
+		error("addModifier failed")
+	end
+
+	self.handle = handle
+	self.bin:add(function()
+		bedwars.remove_movement_modifier(self.handle)
+		self.handle = nil
+	end)
+
+	-- the value is read during reconcile, so a change means swapping the modifier
+	local function refresh()
+		bedwars.remove_movement_modifier(self.handle)
+		self.handle = bedwars.add_movement_modifier(build_properties(self))
+	end
+
+	self.bin:add(self.options["multiplier"]:listen(refresh))
+	self.bin:add(self.options["constant override"]:listen(refresh))
+
+	notify.push("kit speed on, kit is " .. tostring(bedwars.local_kit()), 4)
+end
+
 -- spinbot, spins the character yaw without moving the camera
 
 local spinbot = movement:module{name = "spinbot", description = "spins your character"}
