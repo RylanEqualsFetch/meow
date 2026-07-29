@@ -56,7 +56,7 @@ function modulelist.create(gui, bin)
 			BackgroundColor3 = theme.background,
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-		}, {util.corner(math.floor(entry_height / 2))})
+		}, {util.corner(theme.round.item + 1)})
 
 		local bar = new("Frame", {
 			Parent = body,

@@ -70,9 +70,9 @@ theme.size = {
 }
 
 theme.round = {
-	panel = 4,
-	item = 3,
-	chip = 3,
+	panel = 3,
+	item = 2,
+	chip = 2,
 }
 
 function theme.font(weight)

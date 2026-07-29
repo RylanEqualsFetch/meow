@@ -57,7 +57,7 @@ function splash.create(gui)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ZIndex = 42,
-	}, {util.corner(2)})
+	}, {util.corner(theme.round.chip)})
 
 	local fill = new("Frame", {
 		Parent = track,
@@ -65,7 +65,7 @@ function splash.create(gui)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ZIndex = 43,
-	}, {util.corner(2)})
+	}, {util.corner(theme.round.chip)})
 	theme.tint(fill, "BackgroundColor3")
 
 	-- fade the card in, the wordmark is already writing itself

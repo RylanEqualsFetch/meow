@@ -453,7 +453,7 @@ function controls.color(parent, option, bin)
 		BackgroundColor3 = Color3.new(1, 1, 1),
 		BorderSizePixel = 0,
 		ZIndex = 3,
-	}, {util.corner(3)})
+	}, {util.corner(theme.round.item)})
 
 	local hue, sat, val = Color3.toHSV(option.value)
 
