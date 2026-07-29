@@ -29,6 +29,19 @@ aura:toggle{name = "team check", default = true}
 aura.on_enable = function(self)
 	self.next_swing = 0
 
+	-- the aura carries its own reach. the remote path spoofs the position it
+	-- reports, but the controller path is checked against the swords own range,
+	-- so the meta has to be raised for that half to reach at all
+	local patched = bedwars.request_reach("kill aura", self:get("range"))
+
+	self.bin:add(function()
+		bedwars.release_reach("kill aura")
+	end)
+
+	self.bin:add(self.options["range"]:listen(function(value)
+		bedwars.request_reach("kill aura", value)
+	end))
+
 	local remote = bedwars.attack_remote() ~= nil
 	local controller = bedwars.ready()
 
@@ -36,6 +49,8 @@ aura.on_enable = function(self)
 		notify.push("kill aura found no swing path yet, it will retry")
 	elseif not remote then
 		notify.push("kill aura is on the controller path, no swing remote found", 4)
+	elseif not patched then
+		notify.push("kill aura is on the remote path only, the sword meta is out of reach", 4)
 	end
 end
 
@@ -155,56 +170,6 @@ reach:toggle{name = "block reach", default = true}
 reach:slider{name = "place", min = 12, max = 60, default = 30, suffix = " studs"}
 reach:slider{name = "break", min = 12, max = 60, default = 26, suffix = " studs"}
 
-local saved_ranges = {}
-
-local function apply_sword_reach(value)
-	local touched = false
-
-	local constants = bedwars.combat_constant()
-	if constants then
-		constants.RAYCAST_SWORD_CHARACTER_DISTANCE = value + 2
-		constants.REGION_SWORD_CHARACTER_DISTANCE = value + 2
-		touched = true
-	end
-
-	local meta = bedwars.item_meta()
-	if meta then
-		for name, entry in pairs(meta) do
-			if type(entry) == "table" and type(entry.sword) == "table" then
-				local current = entry.sword.attackRange
-				if saved_ranges[name] == nil then
-					saved_ranges[name] = current or false
-				end
-				-- never move a sword down, a diamond already reaches 24
-				local base = saved_ranges[name] or 0
-				entry.sword.attackRange = math.max(value, base)
-				touched = true
-			end
-		end
-	end
-
-	return touched
-end
-
-local function restore_sword_reach()
-	local constants = bedwars.combat_constant()
-	if constants then
-		constants.RAYCAST_SWORD_CHARACTER_DISTANCE = base_sword_reach
-		constants.REGION_SWORD_CHARACTER_DISTANCE = 12.6
-	end
-
-	local meta = bedwars.item_meta()
-	if meta then
-		for name, saved in pairs(saved_ranges) do
-			local entry = meta[name]
-			if type(entry) == "table" and type(entry.sword) == "table" then
-				entry.sword.attackRange = saved or nil
-			end
-		end
-	end
-	saved_ranges = {}
-end
-
 reach.on_enable = function(self)
 	local attached = {}
 
@@ -215,13 +180,19 @@ reach.on_enable = function(self)
 		table.insert(attached, "constant")
 	end
 
-	if not apply_sword_reach(self:get("sword")) then
+	-- shares the pool with the aura, whichever asks for more wins
+	if not bedwars.request_reach("reach", self:get("sword")) then
 		notify.push("reach could not reach the item meta or the constants")
 		error("nothing to patch")
 	end
 
-	self.bin:add(restore_sword_reach)
-	self.bin:add(self.options["sword"]:listen(apply_sword_reach))
+	self.bin:add(function()
+		bedwars.release_reach("reach")
+	end)
+
+	self.bin:add(self.options["sword"]:listen(function(value)
+		bedwars.request_reach("reach", value)
+	end))
 
 	local selector = bedwars.block_selector()
 	if selector and self:get("block reach") then

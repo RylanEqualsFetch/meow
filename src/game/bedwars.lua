@@ -914,6 +914,83 @@ function bedwars.local_kit()
 	return nil
 end
 
+-- sword range requests
+-- more than one module wants the swords to reach further, the aura and the reach
+-- module both do, so the requests are pooled. the highest wins, originals are
+-- kept once and only put back when the last requester lets go. a sword is never
+-- moved down, a diamond already reaches 24 and a lower request must not nerf it
+
+local reach_requests = {}
+local reach_originals = {}
+
+local function reach_target()
+	local wanted
+	for _, value in pairs(reach_requests) do
+		if not wanted or value > wanted then
+			wanted = value
+		end
+	end
+	return wanted
+end
+
+local function write_sword_ranges(wanted)
+	local touched = false
+
+	local constants = bedwars.combat_constant()
+	if constants then
+		if wanted then
+			constants.RAYCAST_SWORD_CHARACTER_DISTANCE = wanted + 2
+			constants.REGION_SWORD_CHARACTER_DISTANCE = wanted + 2
+		else
+			constants.RAYCAST_SWORD_CHARACTER_DISTANCE = 14.4
+			constants.REGION_SWORD_CHARACTER_DISTANCE = 12.6
+		end
+		touched = true
+	end
+
+	local meta = bedwars.item_meta()
+	if not meta then
+		return touched
+	end
+
+	for name, entry in pairs(meta) do
+		if type(entry) == "table" and type(entry.sword) == "table" then
+			if reach_originals[name] == nil then
+				reach_originals[name] = entry.sword.attackRange or false
+			end
+
+			local original = reach_originals[name] or 0
+			if wanted then
+				entry.sword.attackRange = math.max(wanted, original)
+			else
+				entry.sword.attackRange = reach_originals[name] or nil
+			end
+			touched = true
+		end
+	end
+
+	if not wanted then
+		reach_originals = {}
+	end
+
+	return touched
+end
+
+-- returns true when something was actually patched
+function bedwars.request_reach(key, studs)
+	reach_requests[key] = studs
+	return write_sword_ranges(reach_target())
+end
+
+function bedwars.release_reach(key)
+	reach_requests[key] = nil
+	write_sword_ranges(reach_target())
+end
+
+function bedwars.current_reach()
+	return reach_target()
+end
+
 -- the swing remote
 -- taken from sendServerRequest in the current client rather than from vape,
 -- which matters. the live client sends through the net wrapper with
@@ -1176,6 +1253,8 @@ function bedwars.report()
 		table.insert(lines, "move multiplier: " .. tostring(sprint.moveSpeedMultiplier)
 			.. ", max speed: " .. tostring(sprint.maxSpeed))
 	end
+
+	table.insert(lines, "reach request: " .. tostring(bedwars.current_reach()))
 
 	local held = bedwars.held_tool()
 	local sword = bedwars.best_sword()
