@@ -110,14 +110,27 @@ search_module_raw = function(name)
 	end
 
 	local found
-	pcall(function()
-		for _, inst in ipairs(replicated:GetDescendants()) do
-			if inst:IsA("ModuleScript") and inst.Name == name then
-				found = inst
-				break
+	local roots = {replicated}
+	local player = players.LocalPlayer
+	local scripts = player and player:FindFirstChild("PlayerScripts")
+	if scripts then
+		table.insert(roots, scripts)
+	end
+
+	for _, place in ipairs(roots) do
+		pcall(function()
+			for _, inst in ipairs(place:GetDescendants()) do
+				if inst:IsA("ModuleScript") and inst.Name == name then
+					found = inst
+					break
+				end
 			end
+		end)
+		if found then
+			break
 		end
-	end)
+	end
+
 	return require_instance(found)
 end
 
@@ -573,6 +586,202 @@ function bedwars.attack_range()
 		return constants.RAYCAST_SWORD_CHARACTER_DISTANCE
 	end
 	return 4.8 * bedwars.block_studs
+end
+
+-- the net client every gameplay remote goes through
+function bedwars.remotes_client()
+	local hit = fresh("remotes_client")
+	if hit then
+		return hit
+	end
+	if not ready_to_retry("remotes_client") then
+		return nil
+	end
+
+	local exported = require_instance(dig(replicated, "TS", "remotes"))
+	local value = exported and exported.default and exported.default.Client
+	return remember("remotes_client", type(value) == "table" and value or nil)
+end
+
+-- the block engine has its own remote table, damage block lives there
+function bedwars.block_remotes()
+	local hit = fresh("block_remotes")
+	if hit then
+		return hit
+	end
+	if not ready_to_retry("block_remotes") then
+		return nil
+	end
+
+	local exported = require_instance(dig(
+		replicated,
+		"rbxts_include",
+		"node_modules",
+		"@easy-games",
+		"block-engine",
+		"out",
+		"shared",
+		"remotes"
+	))
+	local remotes = exported and exported.BlockEngineRemotes
+	local value = remotes and remotes.Client
+	return remember("block_remotes", type(value) == "table" and value or nil)
+end
+
+function bedwars.sync_events()
+	local hit = fresh("sync_events")
+	if hit then
+		return hit
+	end
+	if not ready_to_retry("sync_events") then
+		return nil
+	end
+
+	local module = search_module_cached("client-sync-events")
+	if type(module) ~= "table" then
+		return remember("sync_events", nil)
+	end
+	if type(module.BeforeSwordSwing) == "table" then
+		return remember("sync_events", module)
+	end
+	if type(module.default) == "table" and type(module.default.BeforeSwordSwing) == "table" then
+		return remember("sync_events", module.default)
+	end
+	return remember("sync_events", nil)
+end
+
+-- swaps the held item without touching the hotbar ui, same call vape makes
+function bedwars.equip(tool)
+	local client = bedwars.remotes_client()
+	local character = util.character()
+	if not client or not tool or not character then
+		return false
+	end
+
+	local slot = character:FindFirstChild("HandInvItem")
+	if slot and slot.Value == tool then
+		return true
+	end
+
+	local ok = pcall(function()
+		client:Get("EquipItem"):CallServerAsync({hand = tool})
+	end)
+
+	if ok and slot then
+		pcall(function()
+			slot.Value = tool
+		end)
+	end
+	return ok
+end
+
+-- every tool the character is carrying, keyed by the break type its meta says
+function bedwars.tools_by_break_type()
+	local character = util.character()
+	local meta = bedwars.item_meta()
+	local out = {}
+	if not character or not meta then
+		return out
+	end
+
+	local player = players.LocalPlayer
+	local containers = {character}
+	local backpack = player and player:FindFirstChild("Backpack")
+	if backpack then
+		table.insert(containers, backpack)
+	end
+
+	for _, container in ipairs(containers) do
+		for _, tool in ipairs(container:GetChildren()) do
+			if tool:IsA("Tool") then
+				local entry = meta[tool.Name]
+				local block = entry and entry.block
+				local breaks = entry and entry.breakBlock
+				if type(breaks) == "table" and type(breaks.breakType) == "string" then
+					out[breaks.breakType] = out[breaks.breakType] or tool
+				elseif type(block) == "table" and type(block.breakType) == "string" then
+					out[block.breakType] = out[block.breakType] or tool
+				end
+			end
+		end
+	end
+
+	return out
+end
+
+-- the break type a block wants, read off its own meta entry
+function bedwars.break_type_of(block_name)
+	local meta = bedwars.item_meta()
+	local entry = meta and meta[block_name]
+	local block = entry and entry.block
+	if type(block) == "table" and type(block.breakType) == "string" then
+		return block.breakType
+	end
+	return nil
+end
+
+function bedwars.damage_block(block_position, hit_position)
+	local remotes = bedwars.block_remotes()
+	if not remotes then
+		return false
+	end
+
+	local ok = pcall(function()
+		remotes:Get("DamageBlock"):CallServerAsync({
+			blockRef = {blockPosition = block_position},
+			hitPosition = hit_position,
+			hitNormal = Vector3.FromNormalId(Enum.NormalId.Top),
+		})
+	end)
+	return ok
+end
+
+-- a short report of what resolved, the diagnostics module prints this
+function bedwars.report()
+	local lines = {}
+	local checks = {
+		{"knit", bedwars.knit},
+		{"sword controller", bedwars.sword},
+		{"projectile controller", bedwars.projectile_controller},
+		{"combat constant", bedwars.combat_constant},
+		{"item meta", bedwars.item_meta},
+		{"cps constants", bedwars.cps_constants},
+		{"knockback util", bedwars.knockback_util},
+		{"sync events", bedwars.sync_events},
+		{"net client", bedwars.remotes_client},
+		{"block remotes", bedwars.block_remotes},
+		{"block placer", bedwars.placer},
+		{"entity util", bedwars.entity_util},
+		{"world util", bedwars.world_util},
+	}
+
+	for _, check in ipairs(checks) do
+		local ok, value = pcall(check[2])
+		table.insert(lines, check[1] .. ": " .. ((ok and value) and "ok" or "missing"))
+	end
+
+	local meta = bedwars.item_meta()
+	if meta then
+		local swords = 0
+		local sample
+		for name, entry in pairs(meta) do
+			if type(entry) == "table" and type(entry.sword) == "table" then
+				swords = swords + 1
+				sample = sample or (name .. " range " .. tostring(entry.sword.attackRange))
+			end
+		end
+		table.insert(lines, "sword meta entries: " .. tostring(swords))
+		if sample then
+			table.insert(lines, "sample: " .. sample)
+		end
+	end
+
+	local constants = bedwars.combat_constant()
+	if constants then
+		table.insert(lines, "raycast distance: " .. tostring(constants.RAYCAST_SWORD_CHARACTER_DISTANCE))
+	end
+
+	return lines
 end
 
 -- beds carry a collection service tag in this game, which beats name matching

@@ -124,12 +124,68 @@ local function restore_reach()
 end
 
 reach.on_enable = function(self)
-	if not bedwars.combat_constant() and not bedwars.item_meta() then
-		notify.push("reach could not read the combat constants or the item meta")
-		error("nothing to patch")
+	local attached = {}
+
+	-- one, the shared constant, which only matters for weapons with no range
+	if bedwars.combat_constant() then
+		table.insert(attached, "constant")
+	end
+
+	-- two, the raw item meta, this is what attackEntity actually reads
+	local meta = bedwars.item_meta()
+	if meta then
+		table.insert(attached, "item meta")
 	end
 
 	apply_reach(self:get("range"))
+
+	-- three, the per swing meta clone, the same hook the games dagger uses
+	local hook = bedwars.hook_sword_meta and bedwars.hook_sword_meta(function(clone)
+		if type(clone.sword) == "table" then
+			clone.sword.attackRange = self:get("range")
+		end
+	end)
+
+	local events = bedwars.sync_events()
+	if events and not hook then
+		local ok, handle = pcall(function()
+			return events.BeforeSwordSwing:connect(function(_, payload)
+				if type(payload) == "table" and type(payload.weaponMetaClone) == "table" then
+					local sword = payload.weaponMetaClone.sword
+					if type(sword) == "table" then
+						sword.attackRange = self:get("range")
+					end
+				end
+			end)
+		end)
+		if ok then
+			hook = handle
+			table.insert(attached, "swing hook")
+		end
+	end
+
+	if hook then
+		self.bin:add(function()
+			pcall(function()
+				if type(hook) == "function" then
+					hook()
+				elseif type(hook) == "table" then
+					if type(hook.disconnect) == "function" then
+						hook:disconnect()
+					elseif type(hook.Disconnect) == "function" then
+						hook:Disconnect()
+					end
+				end
+			end)
+		end)
+	end
+
+	if #attached == 0 then
+		notify.push("reach found nothing to patch, run debug info")
+		error("no reach mechanism available")
+	end
+
+	notify.push("reach hooked " .. table.concat(attached, ", "), 4)
 
 	self.bin:add(self.options["range"]:listen(function(value)
 		apply_reach(value)
@@ -440,7 +496,11 @@ projectile.on_enable = function(self)
 	local original = controller.calculateImportantLaunchValues
 	local bow = bedwars.bow_constants()
 
+	projectile.calls = 0
+	projectile.hits = 0
+
 	controller.calculateImportantLaunchValues = function(this, projectile_meta, world_meta, origin, shoot_position, ...)
+		projectile.calls = projectile.calls + 1
 		local ok, result = pcall(function()
 			local camera = workspace.CurrentCamera
 			local root = util.root()
@@ -523,6 +583,7 @@ projectile.on_enable = function(self)
 		end)
 
 		if ok and result then
+			projectile.hits = projectile.hits + 1
 			return result
 		end
 		return original(this, projectile_meta, world_meta, origin, shoot_position, ...)
@@ -534,6 +595,84 @@ projectile.on_enable = function(self)
 			current.calculateImportantLaunchValues = original
 		end
 	end)
+end
+
+-- bed breaker
+-- picks the closest reachable face of a tagged bed, swaps to the tool its meta
+-- asks for, then drives the games own damage block remote
+
+local breaker = combat:module{name = "bed breaker", description = "breaks beds and blocks nearby"}
+breaker:slider{name = "range", min = 6, max = 30, default = 18, suffix = " studs"}
+breaker:slider{name = "rate", min = 2, max = 30, default = 12, suffix = " hits"}
+breaker:toggle{name = "swap tools", default = true}
+breaker:toggle{name = "beds only", default = true}
+
+breaker.on_enable = function(self)
+	if not bedwars.block_remotes() then
+		notify.push("bed breaker needs the block engine remotes")
+		error("block remotes not found")
+	end
+	self.next_hit = 0
+end
+
+breaker.on_tick = function(self)
+	local root = util.root()
+	if not root then
+		return
+	end
+
+	local now = os.clock()
+	if now < (self.next_hit or 0) then
+		return
+	end
+
+	local controller = bedwars.block_controller()
+	if not controller then
+		return
+	end
+
+	local range = self:get("range")
+	local best, best_distance, best_part
+
+	for _, bed in ipairs(bedwars.beds()) do
+		local part = bed:IsA("BasePart") and bed or bed:FindFirstChildWhichIsA("BasePart", true)
+		if part then
+			-- skip your own bed, the team attribute is on the bed itself
+			local team = bed:GetAttribute("Team") or bed:GetAttribute("team")
+			local mine = bedwars.team_of()
+			if not (team ~= nil and mine ~= nil and tostring(team) == tostring(mine)) then
+				local distance = (part.Position - root.Position).Magnitude
+				if distance <= range and (not best_distance or distance < best_distance) then
+					best, best_distance, best_part = bed, distance, part
+				end
+			end
+		end
+	end
+
+	if not best_part then
+		self.next_hit = now + 0.2
+		return
+	end
+
+	if self:get("swap tools") then
+		local break_type = bedwars.break_type_of(best.Name) or "wood"
+		local tools = bedwars.tools_by_break_type()
+		local tool = tools[break_type]
+		if tool then
+			bedwars.equip(tool)
+		end
+	end
+
+	local ok, block_position = pcall(function()
+		return controller:getBlockPosition(best_part.Position)
+	end)
+	if not ok or not block_position then
+		self.next_hit = now + 0.2
+		return
+	end
+
+	bedwars.damage_block(block_position, best_part.Position)
+	self.next_hit = now + 1 / math.max(self:get("rate"), 1)
 end
 
 return true

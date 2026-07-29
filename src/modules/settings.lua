@@ -4,6 +4,8 @@ local manager = meow.load("src/core/manager.lua")
 local state = meow.load("src/core/state.lua")
 local theme = meow.load("src/ui/theme.lua")
 local notify = meow.load("src/ui/notify.lua")
+local bedwars = meow.load("src/game/bedwars.lua")
+local manager_ref = manager
 
 local settings = manager.category("settings")
 
@@ -184,6 +186,66 @@ config_module:button{
 				meow.unload()
 			end
 		end)
+	end,
+}
+
+
+-- diagnostics, prints exactly which game hooks resolved so a broken module can
+-- be diagnosed from your side instead of guessed at from mine
+
+local debug_info = settings:module{
+	name = "debug info",
+	description = "reports which game hooks resolved",
+	default = true,
+	hidden = true,
+}
+
+local function build_report()
+	local lines = {"meow " .. tostring(meow.version)}
+
+	for _, line in ipairs(bedwars.report()) do
+		table.insert(lines, line)
+	end
+
+	local projectile = manager_ref.find("projectile aimbot")
+	if projectile then
+		table.insert(lines, "projectile hook calls: " .. tostring(projectile.calls or 0)
+			.. ", retargeted: " .. tostring(projectile.hits or 0))
+	end
+
+	return lines
+end
+
+debug_info:button{
+	name = "print report",
+	action = function()
+		local lines = build_report()
+		for _, line in ipairs(lines) do
+			print("[meow] " .. line)
+		end
+		notify.push("report printed to the console, " .. #lines .. " lines", 5)
+	end,
+}
+
+debug_info:button{
+	name = "copy report",
+	action = function()
+		local text = table.concat(build_report(), "\n")
+		local copy = setclipboard or toclipboard or (syn and syn.write_clipboard)
+		if type(copy) == "function" then
+			pcall(copy, text)
+			notify.push("report copied", 4)
+		else
+			notify.push("this executor has no clipboard access", 5)
+		end
+	end,
+}
+
+debug_info:button{
+	name = "rescan game modules",
+	action = function()
+		bedwars.forget()
+		notify.push("cleared the module cache, modules will resolve again", 4)
 	end,
 }
 

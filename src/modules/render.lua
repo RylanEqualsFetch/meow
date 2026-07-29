@@ -723,9 +723,41 @@ texture_pack.on_enable = function(self)
 	strip_physics(source)
 	self.bin:add(source)
 
+	-- packs name their meshes loosely, sword, Sword, wood_sword, so the lookup
+	-- takes an exact hit first and then falls back to a keyword match
 	local replacements = {}
+	local ordered = {}
 	for _, child in ipairs(source:GetChildren()) do
-		replacements[child.Name:lower()] = child
+		local key = child.Name:lower()
+		replacements[key] = child
+		table.insert(ordered, {key = key, node = child})
+	end
+
+	local function match_for(name)
+		local lower = name:lower()
+		local exact = replacements[lower]
+		if exact then
+			return exact
+		end
+
+		for _, entry in ipairs(ordered) do
+			if lower:find(entry.key, 1, true) or entry.key:find(lower, 1, true) then
+				return entry.node
+			end
+		end
+
+		-- last resort, match on the tool family so a wood axe finds axe
+		for _, family in ipairs({"sword", "pickaxe", "axe", "shears", "bow", "wand"}) do
+			if lower:find(family, 1, true) then
+				for _, entry in ipairs(ordered) do
+					if entry.key:find(family, 1, true) then
+						return entry.node
+					end
+				end
+			end
+		end
+
+		return nil
 	end
 
 	local applied = {}
@@ -748,12 +780,23 @@ texture_pack.on_enable = function(self)
 			return
 		end
 
-		local replacement = replacements[item.Name:lower()]
+		local replacement = match_for(item.Name)
 		if not replacement then
 			return
 		end
 
+		-- the handle can lag the item by a frame, wait for it rather than miss
 		local handle = item:FindFirstChild("Handle")
+		if not handle then
+			for _ = 1, 20 do
+				task.wait()
+				handle = item:FindFirstChild("Handle")
+				if handle or not item.Parent then
+					break
+				end
+			end
+		end
+
 		if not handle or not handle:IsA("BasePart") or applied[handle] then
 			return
 		end
@@ -789,9 +832,16 @@ texture_pack.on_enable = function(self)
 		for _, child in ipairs(viewmodel:GetChildren()) do
 			task.spawn(dress, child)
 		end
+
+		-- no fixed delay, the dress call waits on the handle itself
 		self.bin:add(viewmodel.ChildAdded:Connect(function(child)
-			task.wait(0.1)
-			dress(child)
+			task.spawn(dress, child)
+		end))
+
+		self.bin:add(viewmodel.DescendantAdded:Connect(function(node)
+			if node:IsA("BasePart") and node.Name == "Handle" and node.Parent then
+				task.spawn(dress, node.Parent)
+			end
 		end))
 	end
 
