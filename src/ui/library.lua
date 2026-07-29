@@ -969,7 +969,7 @@ function library.create(gui, bin)
 		resize()
 		bin:add(layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize))
 
-		util.drag(frame, frame, bin, drag_opts)
+		util.drag(frame, header, bin, drag_opts)
 
 		local column = {frame = frame, category = category.name}
 
@@ -1074,7 +1074,7 @@ function library.create(gui, bin)
 		TextXAlignment = Enum.TextXAlignment.Right,
 	}, "regular")
 
-	util.drag(nav, nav, bin, drag_opts)
+	util.drag(nav, nav_header, bin, drag_opts)
 
 	local function section(title, order)
 		local holder = new("Frame", {

@@ -87,18 +87,23 @@ end
 
 -- fps cap
 
-local fps_cap = utility:module{name = "fps cap", description = "raises or lowers the frame limit"}
-fps_cap:slider{name = "limit", min = 30, max = 360, default = 240}
+local fps_cap = utility:module{name = "unlock fps", description = "lifts the frame limit"}
+fps_cap:slider{name = "limit", min = 60, max = 1000, default = 1000}
+fps_cap:toggle{name = "unlimited", default = true}
 
 fps_cap.on_enable = function(self)
 	if type(setfpscap) ~= "function" then
 		notify.push("fps cap needs an executor with setfpscap")
 		error("no setfpscap function")
 	end
-	setfpscap(self:get("limit"))
-	self.bin:add(self.options["limit"]:listen(function(value)
-		setfpscap(value)
-	end))
+	-- zero is what the executors read as no cap at all
+	local function push()
+		setfpscap(self:get("unlimited") and 0 or self:get("limit"))
+	end
+
+	push()
+	self.bin:add(self.options["limit"]:listen(push))
+	self.bin:add(self.options["unlimited"]:listen(push))
 	self.bin:add(function()
 		setfpscap(60)
 	end)
@@ -688,6 +693,69 @@ scaffold.on_tick = function(self)
 	else
 		self.next_place = now + 0.1
 	end
+end
+
+-- staff detector, group rank and name checks on everyone in the server
+
+local staff = utility:module{name = "staff detector", description = "warns when game staff join"}
+staff:slider{name = "group id", min = 0, max = 20000000, default = 4899839}
+staff:slider{name = "min rank", min = 1, max = 255, default = 1}
+staff:toggle{name = "leave on detect", default = false}
+
+local flagged_names = {"easy", "gg", "staff", "admin", "mod"}
+
+staff.on_enable = function(self)
+	local seen = {}
+
+	local function check(player)
+		if seen[player] then
+			return
+		end
+		seen[player] = true
+
+		local group = self:get("group id")
+		local rank = 0
+		if group > 0 then
+			local ok, value = pcall(function()
+				return player:GetRankInGroup(group)
+			end)
+			rank = ok and value or 0
+		end
+
+		local flagged = rank >= self:get("min rank")
+
+		if not flagged then
+			local lower = player.Name:lower()
+			for _, needle in ipairs(flagged_names) do
+				if lower:find(needle, 1, true) then
+					flagged = true
+					break
+				end
+			end
+		end
+
+		if not flagged then
+			return
+		end
+
+		notify.push("staff detected, " .. player.Name, 15)
+
+		if self:get("leave on detect") then
+			pcall(function()
+				util.local_player():Kick("staff detected, left by meow")
+			end)
+		end
+	end
+
+	for _, player in ipairs(players:GetPlayers()) do
+		task.spawn(check, player)
+	end
+	self.bin:add(players.PlayerAdded:Connect(function(player)
+		task.spawn(check, player)
+	end))
+	self.bin:add(players.PlayerRemoving:Connect(function(player)
+		seen[player] = nil
+	end))
 end
 
 return true

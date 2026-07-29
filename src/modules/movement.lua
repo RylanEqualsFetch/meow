@@ -247,6 +247,35 @@ spider.on_tick = function(self)
 	end
 end
 
+-- spinbot, spins the character yaw without moving the camera
+
+local spinbot = movement:module{name = "spinbot", description = "spins your character"}
+spinbot:slider{name = "speed", min = 30, max = 1500, default = 600, suffix = " deg"}
+
+spinbot.on_enable = function(self)
+	self.angle = 0
+	local humanoid = util.humanoid()
+	self.saved_rotate = humanoid and humanoid.AutoRotate
+	self.bin:add(function()
+		local current = util.humanoid()
+		if current then
+			current.AutoRotate = self.saved_rotate ~= false
+		end
+	end)
+end
+
+spinbot.on_tick = function(self, delta)
+	local root = util.root()
+	local humanoid = util.humanoid()
+	if not root or not humanoid then
+		return
+	end
+
+	humanoid.AutoRotate = false
+	self.angle = (self.angle or 0) + self:get("speed") * delta
+	root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, math.rad(self.angle), 0)
+end
+
 -- bhop, jumps the moment you land while still moving
 
 local bhop = movement:module{name = "bhop", description = "jumps every time you land"}

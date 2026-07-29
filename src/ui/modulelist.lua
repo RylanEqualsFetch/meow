@@ -21,7 +21,7 @@ function modulelist.create(gui, bin)
 		Position = UDim2.new(1, -18, 0, 16),
 		Size = UDim2.fromOffset(260, 600),
 	}, {
-		util.list(3, Enum.FillDirection.Vertical, Enum.HorizontalAlignment.Right),
+		util.list(1, Enum.FillDirection.Vertical, Enum.HorizontalAlignment.Right),
 	})
 	bin:add(holder)
 
@@ -56,15 +56,16 @@ function modulelist.create(gui, bin)
 			BackgroundColor3 = theme.background,
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-		}, {util.corner(theme.round.chip)})
+		}, {util.corner(math.floor(entry_height / 2))})
 
 		local bar = new("Frame", {
 			Parent = body,
-			Size = UDim2.fromOffset(2, entry_height - 8),
-			Position = UDim2.fromOffset(0, 4),
+			AnchorPoint = Vector2.new(0, 0.5),
+			Size = UDim2.fromOffset(3, 0),
+			Position = UDim2.new(0, 0, 0.5, 0),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-		}, {util.corner(1)})
+		}, {util.corner(2)})
 		theme.tint(bar, "BackgroundColor3")
 
 		local label = new("TextLabel", {
@@ -85,7 +86,11 @@ function modulelist.create(gui, bin)
 
 		tween(body, {Position = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 0.2}, 0.22, Enum.EasingStyle.Quint)
 		tween(label, {TextTransparency = 0}, 0.22)
-		tween(bar, {BackgroundTransparency = 0}, 0.22)
+		-- the bar grows out of the middle instead of just fading in
+		tween(bar, {
+			BackgroundTransparency = 0,
+			Size = UDim2.fromOffset(3, entry_height - 8),
+		}, 0.26, Enum.EasingStyle.Back)
 	end
 
 	local function remove(mod)
@@ -100,7 +105,7 @@ function modulelist.create(gui, bin)
 			BackgroundTransparency = 1,
 		}, 0.2, Enum.EasingStyle.Quint)
 		tween(entry.label, {TextTransparency = 1}, 0.16)
-		tween(entry.bar, {BackgroundTransparency = 1}, 0.16)
+		tween(entry.bar, {BackgroundTransparency = 1, Size = UDim2.fromOffset(3, 0)}, 0.16)
 
 		task.delay(0.24, function()
 			if entry.frame and entry.frame.Parent then

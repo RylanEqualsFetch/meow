@@ -16,7 +16,7 @@ local render = manager.category("render")
 -- esp
 
 local esp = render:module{name = "esp", description = "boxes, names and health on players"}
-esp:toggle{name = "boxes", default = true}
+esp:dropdown{name = "box style", values = {"box", "corners", "3d box", "3d corners", "off"}, default = "corners"}
 esp:toggle{name = "names", default = true}
 esp:toggle{name = "health", default = true}
 esp:toggle{name = "distance", default = false}
@@ -40,6 +40,31 @@ local function make_entry(container, player)
 	})
 
 	entry.box_stroke = entry.box:FindFirstChildOfClass("UIStroke")
+
+	-- four L shaped corners, each is two thin frames sharing an anchor
+	entry.corners = {}
+	for index = 1, 8 do
+		entry.corners[index] = new("Frame", {
+			Parent = container,
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0,
+			Visible = false,
+			ZIndex = 2,
+		})
+	end
+
+	-- twelve edges of a cube, drawn as rotated lines between projected corners
+	entry.edges = {}
+	for index = 1, 12 do
+		entry.edges[index] = new("Frame", {
+			Parent = container,
+			AnchorPoint = Vector2.new(0, 0.5),
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0,
+			Visible = false,
+			ZIndex = 2,
+		})
+	end
 
 	entry.name = new("TextLabel", {
 		Parent = container,
@@ -98,6 +123,12 @@ end
 
 local function hide_entry(entry)
 	entry.box.Visible = false
+	for _, corner in ipairs(entry.corners) do
+		corner.Visible = false
+	end
+	for _, edge in ipairs(entry.edges) do
+		edge.Visible = false
+	end
 	entry.name.Visible = false
 	entry.distance.Visible = false
 	entry.health.Visible = false
@@ -204,12 +235,88 @@ esp.on_enable = function(self)
 					local height = math.max(math.floor(4.7 * scale), 10)
 					local center = Vector2.new(screen.X, screen.Y)
 
-					local show_box = self:get("boxes")
-					entry.box.Visible = show_box
-					if show_box then
+					local style = self:get("box style")
+					local flat = style == "box"
+					local corners_only = style == "corners"
+					local cube = style == "3d box"
+					local cube_corners = style == "3d corners"
+
+					entry.box.Visible = flat
+					if flat then
 						entry.box.Position = UDim2.fromOffset(center.X, center.Y)
 						entry.box.Size = UDim2.fromOffset(width, height)
 						entry.box_stroke.Color = color
+					end
+
+					-- corners are drawn as eight short bars pinned to the box edges
+					local corner_length = math.max(math.floor(math.min(width, height) * 0.28), 3)
+					local left = center.X - width / 2
+					local top = center.Y - height / 2
+					local corner_specs = {
+						{left, top, corner_length, 1},
+						{left, top, 1, corner_length},
+						{left + width - corner_length, top, corner_length, 1},
+						{left + width - 1, top, 1, corner_length},
+						{left, top + height - 1, corner_length, 1},
+						{left, top + height - corner_length, 1, corner_length},
+						{left + width - corner_length, top + height - 1, corner_length, 1},
+						{left + width - 1, top + height - corner_length, 1, corner_length},
+					}
+
+					for index, spec in ipairs(corner_specs) do
+						local piece = entry.corners[index]
+						piece.Visible = corners_only
+						if corners_only then
+							piece.Position = UDim2.fromOffset(spec[1], spec[2])
+							piece.Size = UDim2.fromOffset(spec[3], spec[4])
+							piece.BackgroundColor3 = color
+						end
+					end
+
+					local show_cube = cube or cube_corners
+					if show_cube then
+						local pivot = root.CFrame
+						local half = Vector3.new(2.2, 3.2, 1.6)
+						local points = {}
+						local on_all = true
+
+						for index = 1, 8 do
+							local sign_x = (index % 2 == 0) and 1 or -1
+							local sign_y = (math.floor((index - 1) / 2) % 2 == 0) and -1 or 1
+							local sign_z = (index <= 4) and -1 or 1
+							local world = pivot * CFrame.new(half.X * sign_x, half.Y * sign_y, half.Z * sign_z)
+							local projected, visible_point = camera:WorldToViewportPoint(world.Position)
+							points[index] = Vector2.new(projected.X, projected.Y)
+							if not visible_point then
+								on_all = false
+							end
+						end
+
+						local pairs_list = {
+							{1, 2}, {3, 4}, {1, 3}, {2, 4},
+							{5, 6}, {7, 8}, {5, 7}, {6, 8},
+							{1, 5}, {2, 6}, {3, 7}, {4, 8},
+						}
+
+						for index, pair in ipairs(pairs_list) do
+							local edge = entry.edges[index]
+							edge.Visible = on_all
+							if on_all then
+								local from = points[pair[1]]
+								local to = points[pair[2]]
+								local delta = to - from
+								local span = delta.Magnitude
+								local draw = cube_corners and math.min(span * 0.3, 18) or span
+								edge.Position = UDim2.fromOffset(from.X, from.Y)
+								edge.Size = UDim2.fromOffset(draw, 1)
+								edge.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+								edge.BackgroundColor3 = color
+							end
+						end
+					else
+						for _, edge in ipairs(entry.edges) do
+							edge.Visible = false
+						end
 					end
 
 					local show_name = self:get("names")

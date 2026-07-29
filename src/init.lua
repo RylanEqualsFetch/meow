@@ -130,6 +130,14 @@ end
 config.watch(bin)
 manager.start(bin)
 
+-- a toast whenever a module flips, hidden ones stay quiet
+bin:add(manager.toggled:connect(function(mod, enabled)
+	if mod.hidden then
+		return
+	end
+	notify.push(mod.name .. (enabled and " on" or " off"), 2)
+end))
+
 bin:add(user_input.InputBegan:Connect(function(input, processed)
 	if processed then
 		return

@@ -69,38 +69,73 @@ aura.on_tick = function(self)
 end
 
 -- reach
--- vape writes the shared combat constant the client checks against, which is
--- simpler and more reliable than hooking the swing event
+-- vape writes the shared combat constant, but attackEntity only falls back to
+-- that when the weapon carries no attackRange of its own, and every sword does,
+-- so the item meta has to be patched as well or nothing changes
 
 local base_reach = 14.4
 
 reach = combat:module{name = "reach", description = "extends attack reach"}
 reach:slider{name = "range", min = 0, max = 18, default = 14, decimals = 1, suffix = " studs"}
 
-local function push_reach(value)
+local sword_ranges = {}
+
+local function apply_reach(studs)
 	local constants = bedwars.combat_constant()
-	if not constants then
-		return false
+	if constants then
+		constants.RAYCAST_SWORD_CHARACTER_DISTANCE = studs + 2
+		constants.REGION_SWORD_CHARACTER_DISTANCE = studs + 2
 	end
-	constants.RAYCAST_SWORD_CHARACTER_DISTANCE = value
+
+	local meta = bedwars.item_meta()
+	if not meta then
+		return constants ~= nil
+	end
+
+	for name, entry in pairs(meta) do
+		if type(entry) == "table" and type(entry.sword) == "table" then
+			if sword_ranges[name] == nil then
+				sword_ranges[name] = entry.sword.attackRange or false
+			end
+			entry.sword.attackRange = studs
+		end
+	end
+
 	return true
 end
 
-reach.on_enable = function(self)
-	if not bedwars.combat_constant() then
-		notify.push("reach could not read the combat constants")
-		error("combat constant not found")
+local function restore_reach()
+	local constants = bedwars.combat_constant()
+	if constants then
+		constants.RAYCAST_SWORD_CHARACTER_DISTANCE = base_reach
+		constants.REGION_SWORD_CHARACTER_DISTANCE = 12.6
 	end
 
-	push_reach(self:get("range") + 2)
+	local meta = bedwars.item_meta()
+	if meta then
+		for name, saved in pairs(sword_ranges) do
+			local entry = meta[name]
+			if type(entry) == "table" and type(entry.sword) == "table" then
+				entry.sword.attackRange = saved or nil
+			end
+		end
+	end
+	sword_ranges = {}
+end
+
+reach.on_enable = function(self)
+	if not bedwars.combat_constant() and not bedwars.item_meta() then
+		notify.push("reach could not read the combat constants or the item meta")
+		error("nothing to patch")
+	end
+
+	apply_reach(self:get("range"))
 
 	self.bin:add(self.options["range"]:listen(function(value)
-		push_reach(value + 2)
+		apply_reach(value)
 	end))
 
-	self.bin:add(function()
-		push_reach(base_reach)
-	end)
+	self.bin:add(restore_reach)
 end
 
 function reach.range_studs()
@@ -215,7 +250,7 @@ end
 
 local aim = combat:module{name = "aim assist", description = "smooth camera pull toward a target"}
 aim:slider{name = "fov", min = 20, max = 400, default = 110, suffix = " px"}
-aim:slider{name = "smoothness", min = 1, max = 25, default = 9}
+aim:slider{name = "speed", min = 1, max = 40, default = 14}
 aim:dropdown{name = "target part", values = {"head", "torso", "root"}, default = "head"}
 aim:dropdown{name = "activate", values = {"always", "right mouse", "left mouse"}, default = "always"}
 aim:toggle{name = "visible check", default = true}
@@ -283,10 +318,12 @@ local function aim_candidates()
 end
 
 aim.on_enable = function(self)
-	-- the game rewrites the camera every frame, so this has to land after it
-	util.render_step("meow_aim_assist", function()
+	-- vape runs this on heartbeat with a delta scaled lerp toward lookAt, which
+	-- lands after the games own camera step without fighting a render binding
+	self.bin:add(util.services.RunService.Heartbeat:Connect(function(delta)
 		local camera = workspace.CurrentCamera
-		if not camera then
+		local root = util.root()
+		if not camera or not root then
 			return
 		end
 
@@ -332,9 +369,171 @@ aim.on_enable = function(self)
 			return
 		end
 
-		local goal = CFrame.new(camera.CFrame.Position, best.Position)
-		camera.CFrame = camera.CFrame:Lerp(goal, 1 / math.max(self:get("smoothness"), 1))
-	end, self.bin)
+		local goal = CFrame.lookAt(camera.CFrame.Position, best.Position)
+		camera.CFrame = camera.CFrame:Lerp(goal, math.min(self:get("speed") * delta, 1))
+	end))
+end
+
+-- velocity, scales the knockback the client applies to you
+
+local velocity = combat:module{name = "velocity", description = "reduces knockback taken"}
+velocity:slider{name = "horizontal", min = 0, max = 100, default = 0, suffix = " pct"}
+velocity:slider{name = "vertical", min = 0, max = 100, default = 0, suffix = " pct"}
+velocity:slider{name = "chance", min = 0, max = 100, default = 100, suffix = " pct"}
+
+velocity.on_enable = function(self)
+	local knockback = bedwars.knockback_util()
+	if not knockback or type(knockback.applyKnockback) ~= "function" then
+		notify.push("velocity needs the bedwars knockback util")
+		error("knockback util not found")
+	end
+
+	local original = knockback.applyKnockback
+	local roll = Random.new()
+
+	knockback.applyKnockback = function(part, mass, direction, values, ...)
+		if roll:NextNumber(0, 100) <= self:get("chance") then
+			values = values or {}
+			values.horizontal = (values.horizontal or 1) * (self:get("horizontal") / 100)
+			values.vertical = (values.vertical or 1) * (self:get("vertical") / 100)
+		end
+		return original(part, mass, direction, values, ...)
+	end
+
+	self.bin:add(function()
+		local current = bedwars.knockback_util()
+		if current then
+			current.applyKnockback = original
+		end
+	end)
+end
+
+-- projectile aimbot, rewrites the launch values the client computes
+
+local projectile = combat:module{name = "projectile aimbot", description = "aims thrown items and arrows"}
+projectile:slider{name = "fov", min = 50, max = 1000, default = 400, suffix = " px"}
+projectile:dropdown{name = "target part", values = {"root", "head"}, default = "root"}
+projectile:toggle{name = "arrows only", default = false}
+projectile:toggle{name = "team check", default = true}
+
+-- iterative ballistic solve, converges on the lead point in a few passes
+local function solve_trajectory(origin, speed, gravity, target_pos, target_vel, passes)
+	local flight = (target_pos - origin).Magnitude / math.max(speed, 1)
+
+	for _ = 1, passes or 5 do
+		local predicted = target_pos + target_vel * flight
+		local aim = predicted + Vector3.new(0, 0.5 * gravity * flight * flight, 0)
+		flight = (aim - origin).Magnitude / math.max(speed, 1)
+	end
+
+	local predicted = target_pos + target_vel * flight
+	return predicted + Vector3.new(0, 0.5 * gravity * flight * flight, 0)
+end
+
+projectile.on_enable = function(self)
+	local controller = bedwars.projectile_controller()
+	if not controller or type(controller.calculateImportantLaunchValues) ~= "function" then
+		notify.push("projectile aimbot needs the bedwars projectile controller")
+		error("projectile controller not found")
+	end
+
+	local original = controller.calculateImportantLaunchValues
+	local bow = bedwars.bow_constants()
+
+	controller.calculateImportantLaunchValues = function(this, projectile_meta, world_meta, origin, shoot_position, ...)
+		local ok, result = pcall(function()
+			local camera = workspace.CurrentCamera
+			local root = util.root()
+			if not camera or not root then
+				return nil
+			end
+
+			local name = tostring(projectile_meta and projectile_meta.projectile or "")
+			if self:get("arrows only") and not name:find("arrow", 1, true) then
+				return nil
+			end
+
+			local start = shoot_position
+			if not start then
+				local got, launch = pcall(function()
+					return this:getLaunchPosition(origin)
+				end)
+				start = got and launch or root.Position
+			end
+			if not start then
+				return nil
+			end
+
+			local viewport = camera.ViewportSize
+			local center = Vector2.new(viewport.X / 2, viewport.Y / 2)
+			local fov = self:get("fov")
+			local wanted = self:get("target part") == "head" and "head" or "root"
+
+			local best, best_distance
+			for _, character in ipairs(aim_candidates()) do
+				local player = players:GetPlayerFromCharacter(character)
+				if not (self:get("team check") and player ~= nil and util.same_team(player)) then
+					local part = pick_part(character, wanted)
+					if part then
+						local screen, on_screen = camera:WorldToViewportPoint(part.Position)
+						if on_screen then
+							local distance = (Vector2.new(screen.X, screen.Y) - center).Magnitude
+							if distance <= fov and (not best_distance or distance < best_distance) then
+								best = part
+								best_distance = distance
+							end
+						end
+					end
+				end
+			end
+
+			if not best then
+				return nil
+			end
+
+			local meta = {}
+			if type(projectile_meta.getProjectileMeta) == "function" then
+				local got, value = pcall(function()
+					return projectile_meta:getProjectileMeta()
+				end)
+				if got and type(value) == "table" then
+					meta = value
+				end
+			end
+
+			local speed = meta.launchVelocity or 100
+			local gravity = (meta.gravitationalAcceleration or 196.2)
+				* (projectile_meta.gravityMultiplier or 1)
+			local lifetime = (world_meta and meta.predictionLifetimeSec) or meta.lifetimeSec or 3
+
+			local offset = start
+			if bow and name ~= "owl_projectile" then
+				offset = start + Vector3.new(bow.RelX or 0, bow.RelY or 0, bow.RelZ or 0)
+			end
+
+			local aim = solve_trajectory(offset, speed, gravity, best.Position, best.AssemblyLinearVelocity, 5)
+
+			return {
+				initialVelocity = CFrame.lookAt(offset, aim).LookVector * speed,
+				positionFrom = offset,
+				deltaT = lifetime,
+				gravitationalAcceleration = gravity,
+				drawDurationSeconds = 5,
+			}
+		end)
+
+		if ok and result then
+			return result
+		end
+		return original(this, projectile_meta, world_meta, origin, shoot_position, ...)
+	end
+
+	self.bin:add(function()
+		local current = bedwars.projectile_controller()
+		if current then
+			current.calculateImportantLaunchValues = original
+		end
+	end)
 end
 
 return true

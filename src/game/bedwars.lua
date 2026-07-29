@@ -504,6 +504,68 @@ function bedwars.entities_in_range(range)
 	return out
 end
 
+-- the raw item meta table, swords carry their own attackRange in here which is
+-- what the client actually validates against, the shared constant is only the
+-- fallback for items that do not define one
+function bedwars.item_meta()
+	local hit = fresh("item_meta")
+	if hit then
+		return hit
+	end
+	if not ready_to_retry("item_meta") then
+		return nil
+	end
+
+	local module = dig(replicated, "TS", "item", "item-meta")
+	local exported = require_instance(module)
+	local getter = exported and exported.getItemMeta
+
+	if type(getter) == "function" then
+		local ok, value = pcall(debug.getupvalue, getter, 1)
+		if ok and type(value) == "table" then
+			return remember("item_meta", value)
+		end
+	end
+
+	return remember("item_meta", nil)
+end
+
+function bedwars.knockback_util()
+	return resolve_table(
+		"knockback_util",
+		{"TS", "damage", "knockback-util"},
+		"KnockbackUtil",
+		"knockback-util"
+	)
+end
+
+function bedwars.projectile_controller()
+	return bedwars.controller("ProjectileController")
+end
+
+-- the bow offsets vape reads off an upvalue of the beam function
+function bedwars.bow_constants()
+	local hit = fresh("bow_constants")
+	if hit then
+		return hit
+	end
+	if not ready_to_retry("bow_constants") then
+		return nil
+	end
+
+	local controller = bedwars.projectile_controller()
+	local beam = controller and controller.enableBeam
+	if type(beam) ~= "function" then
+		return remember("bow_constants", nil)
+	end
+
+	local ok, value = pcall(debug.getupvalue, beam, 8)
+	if ok and type(value) == "table" then
+		return remember("bow_constants", value)
+	end
+	return remember("bow_constants", nil)
+end
+
 -- the distance the client will currently accept a swing at
 function bedwars.attack_range()
 	local constants = bedwars.combat_constant()
