@@ -915,9 +915,10 @@ function bedwars.local_kit()
 end
 
 -- the swing remote
--- vape never calls attackEntity for the aura, it fires this remote itself. that
--- matters twice over. the weapon is a field in the payload, which is what makes
--- a silent hit silent, and the position the server range checks is one we supply
+-- taken from sendServerRequest in the current client rather than from vape,
+-- which matters. the live client sends through the net wrapper with
+-- Client:Get("SwordHit"):SendToServer, not FireServer on the raw remote, and the
+-- range the server checks is selfPosition, which is the character pivot
 
 local max_server_reach = 14.399
 
@@ -930,15 +931,24 @@ function bedwars.attack_remote()
 		return nil
 	end
 
-	-- the net wrapper first, it is the same object the game itself fires
 	local client = bedwars.remotes_client()
 	if client then
 		local ok, wrapper = pcall(function()
 			return client:Get("SwordHit")
 		end)
-		if ok and type(wrapper) == "table" and typeof(wrapper.instance) == "Instance" then
-			return remember("attack_remote", wrapper.instance)
+		if ok and type(wrapper) == "table" then
+			return remember("attack_remote", wrapper)
 		end
+	end
+
+	return remember("attack_remote", nil)
+end
+
+-- the raw remote instance, only used if the wrapper will not send
+function bedwars.attack_remote_instance()
+	local wrapper = bedwars.attack_remote()
+	if wrapper and typeof(wrapper.instance) == "Instance" then
+		return wrapper.instance
 	end
 
 	local found
@@ -950,35 +960,65 @@ function bedwars.attack_remote()
 			end
 		end
 	end)
-
-	return remember("attack_remote", found)
+	return found
 end
 
--- fires one hit as weapon, from a claimed position the server will accept
+local function pivot_of(model)
+	local ok, cframe = pcall(function()
+		return model:GetPivot()
+	end)
+	if ok and cframe then
+		return cframe.Position
+	end
+	local part = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart")
+	return part and part.Position or nil
+end
+
+-- one hit, built exactly the way the client builds it
 function bedwars.swing_at(character, weapon)
-	local remote = bedwars.attack_remote()
-	local my_root = util.root()
-	if not remote or not character or not weapon or not my_root then
+	local wrapper = bedwars.attack_remote()
+	local instance = not wrapper and bedwars.attack_remote_instance() or nil
+	if not wrapper and not instance then
 		return false
 	end
 
-	local target_root = character.PrimaryPart or character:FindFirstChild("HumanoidRootPart")
-	if not target_root then
+	local me = util.character()
+	if not character or not weapon or not me then
 		return false
 	end
 
-	local self_position = my_root.Position
-	local delta = target_root.Position - self_position
+	local self_position = pivot_of(me)
+	local target_position = pivot_of(character)
+	if not self_position or not target_position then
+		return false
+	end
+
+	local delta = target_position - self_position
 	local distance = delta.Magnitude
 	if distance <= 0 then
 		return false
 	end
 
-	local direction = CFrame.lookAt(self_position, target_root.Position).LookVector
+	local direction = CFrame.lookAt(self_position, target_position).LookVector
 
-	-- slide the claimed origin toward the target until the distance it reports
-	-- sits inside the servers limit, the real gap can be anything
-	local origin = self_position + direction * math.max(distance - max_server_reach, 0)
+	-- the server range checks selfPosition, so slide the claimed origin up the
+	-- aim vector until the gap it reports is inside the limit
+	local claimed = self_position + direction * math.max(distance - max_server_reach, 0)
+
+	local camera = workspace.CurrentCamera
+	local payload = {
+		weapon = weapon,
+		entityInstance = character,
+		validate = {
+			raycast = camera and {
+				cameraPosition = {value = claimed},
+				cursorDirection = {value = direction},
+			} or nil,
+			targetPosition = {value = target_position},
+			selfPosition = {value = claimed},
+		},
+		chargedAttack = {chargeRatio = 0},
+	}
 
 	local controller = bedwars.sword()
 	if controller then
@@ -987,23 +1027,25 @@ function bedwars.swing_at(character, weapon)
 		end)
 	end
 
-	local ok = pcall(function()
-		remote:FireServer({
-			weapon = weapon,
-			chargedAttack = {chargeRatio = 0},
-			entityInstance = character,
-			validate = {
-				raycast = {
-					cameraPosition = {value = origin},
-					cursorDirection = {value = direction},
-				},
-				targetPosition = {value = target_root.Position},
-				selfPosition = {value = origin},
-			},
-		})
-	end)
+	if wrapper then
+		local ok = pcall(function()
+			wrapper:SendToServer(payload)
+		end)
+		if ok then
+			return true
+		end
+	end
 
-	return ok
+	if not instance then
+		instance = bedwars.attack_remote_instance()
+	end
+	if instance then
+		return pcall(function()
+			instance:FireServer(payload)
+		end)
+	end
+
+	return false
 end
 
 bedwars.max_server_reach = max_server_reach

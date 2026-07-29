@@ -22,7 +22,7 @@ aura:slider{name = "range", min = 5, max = 40, default = 18, decimals = 1, suffi
 aura:slider{name = "swings", min = 1, max = 20, default = 12, suffix = " cps"}
 aura:slider{name = "targets", min = 1, max = 6, default = 3}
 aura:slider{name = "angle", min = 30, max = 360, default = 360, suffix = " deg"}
-aura:toggle{name = "silent", default = true}
+aura:dropdown{name = "method", values = {"silent", "controller", "both"}, default = "silent"}
 aura:toggle{name = "wall check", default = false}
 aura:toggle{name = "team check", default = true}
 
@@ -108,7 +108,11 @@ aura.on_tick = function(self)
 	local found = aura_targets(self, range)
 	local swung = false
 
-	if #found > 0 and weapon then
+	local method = self:get("method")
+	local use_remote = method == "silent" or method == "both"
+	local use_controller = method == "controller" or method == "both"
+
+	if use_remote and #found > 0 and weapon then
 		local limit = math.min(#found, self:get("targets"))
 		for index = 1, limit do
 			if bedwars.swing_at(found[index].character, weapon) then
@@ -117,13 +121,12 @@ aura.on_tick = function(self)
 		end
 	end
 
-	-- the controller path is the one that was landing hits before the remote
-	-- rewrite, so it always runs as a backstop rather than only when the remote
-	-- is missing entirely
-	if not swung then
+	-- a sent packet is not a landed hit, so the controller path is not gated on
+	-- the remote failing, it is its own mode and can run alongside
+	if use_controller or (use_remote and not swung) then
 		local target = bedwars.target_in_range(range)
-		if target then
-			swung = bedwars.attack(target)
+		if target and bedwars.attack(target) then
+			swung = true
 		end
 	end
 
@@ -135,48 +138,91 @@ aura.on_tick = function(self)
 end
 
 -- reach
--- straight port of the cat client. the sword side is only the shared constant.
--- my previous version also wrote attackRange onto every sword in the item meta,
--- and since attackEntity prefers that field over the constant, it was pinning
--- the range to a lower number and cancelling the constant out. that write is gone
+-- cat and vape both only write CombatConstant.RAYCAST_SWORD_CHARACTER_DISTANCE,
+-- and on this build that constant is dead weight. attackEntity reads the swords
+-- own attackRange and only falls back to the constant when the weapon has none,
+-- and every sword defines one, 12 on a wood sword up to 24 on the better ones.
+-- so the meta is what has to move. it is raised, never lowered, because my last
+-- version wrote a flat value and quietly nerfed swords that already reached further
 
 local base_sword_reach = 14.4
 local base_place_range = 24
 local base_break_range = 18
 
 reach = combat:module{name = "reach", description = "attack, place and break further"}
-reach:slider{name = "sword", min = 4, max = 24, default = 18, decimals = 1, suffix = " studs"}
+reach:slider{name = "sword", min = 12, max = 40, default = 26, decimals = 1, suffix = " studs"}
 reach:toggle{name = "block reach", default = true}
 reach:slider{name = "place", min = 12, max = 60, default = 30, suffix = " studs"}
 reach:slider{name = "break", min = 12, max = 60, default = 26, suffix = " studs"}
 
-local function push_sword_reach(value)
+local saved_ranges = {}
+
+local function apply_sword_reach(value)
+	local touched = false
+
 	local constants = bedwars.combat_constant()
-	if not constants then
-		return false
+	if constants then
+		constants.RAYCAST_SWORD_CHARACTER_DISTANCE = value + 2
+		constants.REGION_SWORD_CHARACTER_DISTANCE = value + 2
+		touched = true
 	end
-	-- attackEntity allows the value plus two, cat sends range plus two as well
-	constants.RAYCAST_SWORD_CHARACTER_DISTANCE = value + 2
-	return true
+
+	local meta = bedwars.item_meta()
+	if meta then
+		for name, entry in pairs(meta) do
+			if type(entry) == "table" and type(entry.sword) == "table" then
+				local current = entry.sword.attackRange
+				if saved_ranges[name] == nil then
+					saved_ranges[name] = current or false
+				end
+				-- never move a sword down, a diamond already reaches 24
+				local base = saved_ranges[name] or 0
+				entry.sword.attackRange = math.max(value, base)
+				touched = true
+			end
+		end
+	end
+
+	return touched
+end
+
+local function restore_sword_reach()
+	local constants = bedwars.combat_constant()
+	if constants then
+		constants.RAYCAST_SWORD_CHARACTER_DISTANCE = base_sword_reach
+		constants.REGION_SWORD_CHARACTER_DISTANCE = 12.6
+	end
+
+	local meta = bedwars.item_meta()
+	if meta then
+		for name, saved in pairs(saved_ranges) do
+			local entry = meta[name]
+			if type(entry) == "table" and type(entry.sword) == "table" then
+				entry.sword.attackRange = saved or nil
+			end
+		end
+	end
+	saved_ranges = {}
 end
 
 reach.on_enable = function(self)
 	local attached = {}
 
-	if push_sword_reach(self:get("sword")) then
-		table.insert(attached, "sword")
+	if bedwars.item_meta() then
+		table.insert(attached, "item meta")
+	end
+	if bedwars.combat_constant() then
+		table.insert(attached, "constant")
 	end
 
-	self.bin:add(function()
-		local constants = bedwars.combat_constant()
-		if constants then
-			constants.RAYCAST_SWORD_CHARACTER_DISTANCE = base_sword_reach
-		end
-	end)
+	if not apply_sword_reach(self:get("sword")) then
+		notify.push("reach could not reach the item meta or the constants")
+		error("nothing to patch")
+	end
 
-	self.bin:add(self.options["sword"]:listen(push_sword_reach))
+	self.bin:add(restore_sword_reach)
+	self.bin:add(self.options["sword"]:listen(apply_sword_reach))
 
-	-- place and break range ride on the selector call the client already makes
 	local selector = bedwars.block_selector()
 	if selector and self:get("block reach") then
 		local original = selector.getMouseInfo
@@ -201,17 +247,12 @@ reach.on_enable = function(self)
 		end)
 	end
 
-	if #attached == 0 then
-		notify.push("reach found nothing to patch, run debug info")
-		error("no reach mechanism available")
-	end
-
-	notify.push("reach on for " .. table.concat(attached, " and "), 4)
+	notify.push("reach on through " .. table.concat(attached, ", "), 4)
 end
 
 function reach.range_studs()
 	if reach.enabled then
-		return reach:get("sword") + 2
+		return reach:get("sword")
 	end
 	return nil
 end
