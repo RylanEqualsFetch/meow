@@ -21,8 +21,7 @@ local aura = combat:module{name = "kill aura", description = "swings at everythi
 aura:dropdown{name = "mode", values = {"legit", "rage"}, default = "legit"}
 aura:slider{name = "swings", min = 1, max = 20, default = 12, suffix = " cps"}
 aura:slider{name = "targets", min = 1, max = 6, default = 3}
-aura:toggle{name = "silent swap", default = true}
-aura:slider{name = "swap delay", min = 0, max = 200, default = 40, suffix = " ms"}
+aura:toggle{name = "silent", default = true}
 aura:toggle{name = "hold weapon only", default = false}
 
 aura.on_enable = function(self)
@@ -30,25 +29,30 @@ aura.on_enable = function(self)
 		notify.push("kill aura needs the bedwars sword controller")
 		error("sword controller not found")
 	end
-	self.next_swing = 0
-	self.swapping = false
 
-	-- if the swap is interrupted mid swing, put the old item back on disable
+	self.next_swing = 0
+
+	-- the spoof is installed once and only does anything while a swing is being
+	-- sent, so the hand reads normally the rest of the time
+	if self:get("silent") and not bedwars.install_hand_spoof() then
+		notify.push("kill aura could not hook the hand item, swinging normally")
+	end
+
 	self.bin:add(function()
-		self.swapping = false
+		bedwars.set_hand_spoof(nil)
+		bedwars.remove_hand_spoof()
 	end)
 end
 
 aura.on_tick = function(self)
 	local now = os.clock()
-	if now < (self.next_swing or 0) or self.swapping then
+	if now < (self.next_swing or 0) then
 		return
 	end
 
-	local silent = self:get("silent swap")
+	local silent = self:get("silent")
 
-	-- with silent swap on it does not matter what you are holding, the sword is
-	-- equipped for the swing and the old item goes straight back
+	-- holding the weapon only matters when the spoof is off
 	if not silent and self:get("hold weapon only") and not bedwars.hand_item() then
 		return
 	end
@@ -74,63 +78,37 @@ aura.on_tick = function(self)
 		return
 	end
 
-	local function swing()
-		local swung = false
-		for _, target in ipairs(targets) do
-			if bedwars.attack(target) then
-				swung = true
+	-- point the hand at the sword for the swing itself, then put it straight back
+	local spoofed = false
+	if silent then
+		local held = bedwars.held_tool()
+		if not bedwars.is_sword(held) then
+			local sword = bedwars.best_sword()
+			if sword then
+				bedwars.install_hand_spoof()
+				bedwars.set_hand_spoof(sword)
+				spoofed = true
 			end
 		end
-		return swung
 	end
 
-	local held = bedwars.held_tool()
-
-	if not silent or bedwars.is_sword(held) then
-		if swing() then
-			self.next_swing = now + 1 / math.max(self:get("swings"), 1)
-		else
-			self.next_swing = now + 0.05
+	local swung = false
+	for _, target in ipairs(targets) do
+		if bedwars.attack(target) then
+			swung = true
 		end
-		return
 	end
 
-	local sword = bedwars.best_sword()
-	if not sword then
-		-- nothing to swap to, fall back to swinging with whatever is in hand
-		if swing() then
-			self.next_swing = now + 1 / math.max(self:get("swings"), 1)
-		else
-			self.next_swing = now + 0.05
-		end
-		return
+	if spoofed then
+		bedwars.set_hand_spoof(nil)
 	end
 
-	-- the equip is a server round trip, so the swap runs off the tick thread
-	self.swapping = true
-	self.next_swing = now + 1 / math.max(self:get("swings"), 1)
-
-	task.spawn(function()
-		local wait_time = self:get("swap delay") / 1000
-
-		bedwars.equip(sword)
-		if wait_time > 0 then
-			task.wait(wait_time)
-		end
-
-		pcall(swing)
-
-		if held and held ~= sword and held.Parent then
-			if wait_time > 0 then
-				task.wait(wait_time)
-			end
-			bedwars.equip(held)
-		end
-
-		self.swapping = false
-	end)
+	if swung then
+		self.next_swing = now + 1 / math.max(self:get("swings"), 1)
+	else
+		self.next_swing = now + 0.05
+	end
 end
-
 
 -- reach
 -- vape writes the shared combat constant, but attackEntity only falls back to

@@ -5,6 +5,7 @@ local theme = meow.load("src/ui/theme.lua")
 local manager = meow.load("src/core/manager.lua")
 local state = meow.load("src/core/state.lua")
 local bedwars = meow.load("src/game/bedwars.lua")
+local notify = meow.load("src/ui/notify.lua")
 
 local new = util.new
 local players = util.services.Players

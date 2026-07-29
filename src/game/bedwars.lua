@@ -795,6 +795,76 @@ function bedwars.best_sword()
 	return best
 end
 
+-- hand spoofing
+-- attackEntity and swingSwordInRegion both start by asking the sword controller
+-- for the held item and then read that items meta. overriding what that call
+-- returns for the duration of a swing makes the client build the swing as if
+-- the sword were in hand, with no equip remote and nothing visible changing
+
+local spoof_tool = nil
+local spoof_installed = false
+local spoof_original = nil
+
+function bedwars.set_hand_spoof(tool)
+	spoof_tool = tool
+end
+
+function bedwars.hand_spoof_active()
+	return spoof_installed
+end
+
+function bedwars.install_hand_spoof()
+	if spoof_installed then
+		return true
+	end
+
+	local controller = bedwars.sword()
+	if not controller or type(controller.getHandItem) ~= "function" then
+		return false
+	end
+
+	spoof_original = controller.getHandItem
+
+	controller.getHandItem = function(this, ...)
+		local real = spoof_original(this, ...)
+		local tool = spoof_tool
+
+		if not tool or not tool.Parent then
+			return real
+		end
+
+		-- the rest of the shape is kept so anything else reading the hand still
+		-- sees the fields it expects, only the tool is swapped underneath
+		local copy = {}
+		if type(real) == "table" then
+			for key, value in pairs(real) do
+				copy[key] = value
+			end
+		end
+		copy.tool = tool
+		copy.toolType = "sword"
+		return copy
+	end
+
+	spoof_installed = true
+	return true
+end
+
+function bedwars.remove_hand_spoof()
+	if not spoof_installed then
+		return
+	end
+
+	local controller = bedwars.sword()
+	if controller and spoof_original then
+		controller.getHandItem = spoof_original
+	end
+
+	spoof_installed = false
+	spoof_original = nil
+	spoof_tool = nil
+end
+
 -- a short report of what resolved, the diagnostics module prints this
 function bedwars.report()
 	local lines = {}
@@ -843,7 +913,8 @@ function bedwars.report()
 	local held = bedwars.held_tool()
 	local sword = bedwars.best_sword()
 	table.insert(lines, "held: " .. (held and held.Name or "none")
-		.. ", best sword: " .. (sword and sword.Name or "none"))
+		.. ", best sword: " .. (sword and sword.Name or "none")
+		.. ", hand spoof: " .. (bedwars.hand_spoof_active() and "installed" or "off"))
 
 	return lines
 end
