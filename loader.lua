@@ -28,8 +28,11 @@ local function http_get(url)
 end
 
 -- newest commit on the branch, nil when the api is unreachable or rate limited
+-- the plain api url gets served from cache and can hand back the previous commit
+-- for a while after a push, so every call carries a nonce
 local function resolve_commit()
-	local body = http_get("https://api.github.com/repos/" .. repo .. "/commits/" .. branch)
+	local nonce = tostring(math.floor(tick() * 1000)) .. tostring(math.random(1, 1e6))
+	local body = http_get("https://api.github.com/repos/" .. repo .. "/commits/" .. branch .. "?nocache=" .. nonce)
 	if not body then
 		return nil
 	end
