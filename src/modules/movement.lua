@@ -289,4 +289,66 @@ safe_walk.on_tick = function(self)
 	end
 end
 
+-- jump reset, drops fall damage speed on landing
+
+local glide = movement:module{name = "glide", description = "slows your fall"}
+glide:slider{name = "fall speed", min = 1, max = 40, default = 12}
+
+glide.on_tick = function(self)
+	local root = util.root()
+	if not root then
+		return
+	end
+	local velocity = root.AssemblyLinearVelocity
+	local limit = -self:get("fall speed")
+	if velocity.Y < limit then
+		root.AssemblyLinearVelocity = Vector3.new(velocity.X, limit, velocity.Z)
+	end
+end
+
+-- auto sprint
+
+local auto_sprint = movement:module{name = "auto sprint", description = "holds sprint for you"}
+
+auto_sprint.on_enable = function(self)
+	self.bin:add(util.services.RunService.Heartbeat:Connect(function()
+		local humanoid = util.humanoid()
+		if humanoid and humanoid.MoveDirection.Magnitude > 0 then
+			pcall(function()
+				humanoid:SetAttribute("sprinting", true)
+			end)
+		end
+	end))
+end
+
+-- anti void, yanks you back up when you fall past a height
+
+local anti_void = movement:module{name = "anti void", description = "pulls you back when you fall out"}
+anti_void:slider{name = "trigger height", min = -200, max = 40, default = -25, suffix = " y"}
+
+anti_void.on_enable = function(self)
+	self.anchor = nil
+	self.bin:add(function()
+		self.anchor = nil
+	end)
+end
+
+anti_void.on_tick = function(self)
+	local root = util.root()
+	if not root then
+		return
+	end
+
+	if root.Position.Y > self:get("trigger height") then
+		-- remember the last safe spot while we are still above the line
+		self.anchor = root.Position
+		return
+	end
+
+	if self.anchor then
+		root.CFrame = CFrame.new(self.anchor + Vector3.new(0, 4, 0))
+		root.AssemblyLinearVelocity = Vector3.zero
+	end
+end
+
 return true

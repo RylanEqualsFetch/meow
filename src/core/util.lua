@@ -184,19 +184,36 @@ function util.signal()
 end
 
 -- opts: {snap = pixels, on_start = fn, on_end = fn}
+-- the move is driven from renderstepped against the live mouse location rather
+-- than from inputchanged, which is what stopped drags from tracking before
 function util.drag(frame, handle, bin, opts)
 	handle = handle or frame
 	opts = opts or {}
 
-	local dragging = false
-	local start_pos, start_input
+	-- a plain frame never receives input unless it is active
+	pcall(function()
+		handle.Active = true
+	end)
 
-	local function place(x, y)
+	local run_service = util.services.RunService
+	local dragging = false
+	local move_connection
+	local start_mouse, start_pos
+
+	local function place()
+		local mouse = user_input:GetMouseLocation()
+		local dx = mouse.X - start_mouse.X
+		local dy = mouse.Y - start_mouse.Y
+
+		local x = start_pos.X.Offset + dx
+		local y = start_pos.Y.Offset + dy
+
 		local snap = opts.snap
 		if snap and snap > 1 then
 			x = math.floor(x / snap + 0.5) * snap
 			y = math.floor(y / snap + 0.5) * snap
 		end
+
 		frame.Position = UDim2.new(start_pos.X.Scale, x, start_pos.Y.Scale, y)
 	end
 
@@ -205,21 +222,38 @@ function util.drag(frame, handle, bin, opts)
 			return
 		end
 		dragging = false
+		if move_connection then
+			move_connection:Disconnect()
+			move_connection = nil
+		end
 		if opts.on_end then
 			opts.on_end()
 		end
 	end
 
 	bin:add(handle.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
-			start_input = input.Position
-			start_pos = frame.Position
-			if opts.on_start then
-				opts.on_start()
-			end
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1
+			and input.UserInputType ~= Enum.UserInputType.Touch then
+			return
 		end
+
+		dragging = true
+		start_mouse = user_input:GetMouseLocation()
+		start_pos = frame.Position
+
+		if opts.on_start then
+			opts.on_start()
+		end
+
+		if move_connection then
+			move_connection:Disconnect()
+		end
+		move_connection = run_service.RenderStepped:Connect(function()
+			if not dragging then
+				return
+			end
+			place()
+		end)
 	end))
 
 	bin:add(user_input.InputEnded:Connect(function(input)
@@ -229,18 +263,19 @@ function util.drag(frame, handle, bin, opts)
 		end
 	end))
 
-	bin:add(user_input.InputChanged:Connect(function(input)
-		if not dragging then
-			return
-		end
-		if input.UserInputType == Enum.UserInputType.MouseMovement
-			or input.UserInputType == Enum.UserInputType.Touch then
-			local delta = input.Position - start_input
-			place(start_pos.X.Offset + delta.X, start_pos.Y.Offset + delta.Y)
-		end
-	end))
-
 	bin:add(stop)
+end
+
+-- camera writes have to land after the game moves the camera each frame
+function util.render_step(name, fn, bin, priority)
+	local run_service = util.services.RunService
+	priority = priority or (Enum.RenderPriority.Camera.Value + 1)
+	run_service:BindToRenderStep(name, priority, fn)
+	bin:add(function()
+		pcall(function()
+			run_service:UnbindFromRenderStep(name)
+		end)
+	end)
 end
 
 function util.key_name(key)

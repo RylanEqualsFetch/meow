@@ -8,6 +8,7 @@ local state = meow.load("src/core/state.lua")
 
 local players = util.services.Players
 local user_input = util.services.UserInputService
+local run_service = util.services.RunService
 local http_service = util.services.HttpService
 
 local utility = manager.category("utility")
@@ -320,6 +321,82 @@ hop.on_enable = function(self)
 		end
 
 		notify.push("no server matched")
+		self:set_enabled(false)
+	end)
+end
+
+-- auto respawn
+
+local auto_respawn = utility:module{name = "auto respawn", description = "reloads the character when you die"}
+
+auto_respawn.on_enable = function(self)
+	local player = util.local_player()
+
+	local function watch(character)
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+			or character:WaitForChild("Humanoid", 5)
+		if not humanoid then
+			return
+		end
+		self.bin:add(humanoid.Died:Connect(function()
+			notify.push("respawning")
+		end))
+	end
+
+	if player.Character then
+		task.spawn(watch, player.Character)
+	end
+	self.bin:add(player.CharacterAdded:Connect(watch))
+end
+
+-- ping spoof free latency readout, shows the real numbers larger
+
+local performance = utility:module{name = "performance", description = "logs frame drops"}
+performance:slider{name = "threshold", min = 5, max = 60, default = 20, suffix = " fps"}
+
+performance.on_enable = function(self)
+	local frames = 0
+	local elapsed = 0
+	local warned = 0
+
+	self.bin:add(run_service.RenderStepped:Connect(function(delta)
+		frames = frames + 1
+		elapsed = elapsed + delta
+		if elapsed < 1 then
+			return
+		end
+
+		local fps = frames / elapsed
+		frames = 0
+		elapsed = 0
+
+		if fps < self:get("threshold") and os.clock() - warned > 10 then
+			warned = os.clock()
+			notify.push("frame rate dipped to " .. math.floor(fps))
+		end
+	end))
+end
+
+-- copy join link
+
+local join_link = utility:module{name = "copy join link", description = "puts a rejoin snippet on the clipboard"}
+
+join_link.on_enable = function(self)
+	local snippet = "game:GetService(\"TeleportService\"):TeleportToPlaceInstance("
+		.. tostring(game.PlaceId)
+		.. ", \""
+		.. tostring(game.JobId)
+		.. "\", game:GetService(\"Players\").LocalPlayer)"
+
+	local copy = setclipboard or toclipboard or (syn and syn.write_clipboard)
+	if type(copy) == "function" then
+		pcall(copy, snippet)
+		notify.push("join link copied")
+	else
+		notify.push("this executor has no clipboard access")
+	end
+
+	task.delay(0.3, function()
 		self:set_enabled(false)
 	end)
 end

@@ -4,6 +4,7 @@ local util = meow.load("src/core/util.lua")
 local theme = meow.load("src/ui/theme.lua")
 local manager = meow.load("src/core/manager.lua")
 local state = meow.load("src/core/state.lua")
+local bedwars = meow.load("src/game/bedwars.lua")
 
 local new = util.new
 local players = util.services.Players
@@ -319,6 +320,250 @@ fullbright.on_disable = function(self)
 		end)
 	end
 	self.saved = nil
+end
+
+-- bed esp, beds carry a collection service tag in bedwars so they are exact
+
+local bed_esp = render:module{name = "bed esp", description = "beds through walls"}
+bed_esp:toggle{name = "highlight", default = true}
+bed_esp:toggle{name = "label", default = true}
+bed_esp:toggle{name = "hide own bed", default = true}
+bed_esp:slider{name = "max distance", min = 100, max = 3000, default = 1200, suffix = " studs"}
+bed_esp:color{name = "color", default = Color3.fromRGB(255, 122, 162)}
+
+local function through_wall_highlight(adornee, parent, color)
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "meow_esp"
+	-- always on top is what makes it read through geometry
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.FillTransparency = 0.55
+	highlight.OutlineTransparency = 0
+	highlight.FillColor = color
+	highlight.OutlineColor = color
+	highlight.Adornee = adornee
+	highlight.Parent = parent
+	return highlight
+end
+
+local function through_wall_label(adornee, parent, text, color, distance_limit)
+	local billboard = new("BillboardGui", {
+		Name = "meow_esp_tag",
+		Parent = parent,
+		Adornee = adornee,
+		AlwaysOnTop = true,
+		Size = UDim2.fromOffset(180, 20),
+		StudsOffset = Vector3.new(0, 2.4, 0),
+		MaxDistance = distance_limit,
+	})
+
+	local label = new("TextLabel", {
+		Parent = billboard,
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Text = text,
+		TextSize = theme.size.small,
+		TextColor3 = color,
+		TextStrokeTransparency = 0.4,
+	})
+	theme.apply_font(label, "semibold")
+
+	return billboard, label
+end
+
+bed_esp.on_enable = function(self)
+	local host = state.ui.host or state.ui.gui
+	if not host then
+		error("meow: bed esp needs the gui host")
+	end
+
+	local tracked = {}
+
+	self.bin:add(function()
+		for _, entry in pairs(tracked) do
+			if entry.highlight then
+				entry.highlight:Destroy()
+			end
+			if entry.billboard then
+				entry.billboard:Destroy()
+			end
+		end
+	end)
+
+	local function drop(bed)
+		local entry = tracked[bed]
+		if not entry then
+			return
+		end
+		if entry.highlight then
+			entry.highlight:Destroy()
+		end
+		if entry.billboard then
+			entry.billboard:Destroy()
+		end
+		tracked[bed] = nil
+	end
+
+	self.bin:add(run_service.Heartbeat:Connect(function()
+		local color = self:get("color")
+		local limit = self:get("max distance")
+		local root = util.root()
+		local my_team = bedwars.team_of()
+		local seen = {}
+
+		for _, bed in ipairs(bedwars.beds()) do
+			local part = bed:IsA("BasePart") and bed or bed:FindFirstChildWhichIsA("BasePart", true)
+			local adornee = bed:IsA("Model") and bed or part
+
+			local skip = false
+			if self:get("hide own bed") and my_team then
+				local team = bed:GetAttribute("Team") or bed:GetAttribute("team")
+				if team ~= nil and tostring(team) == tostring(my_team) then
+					skip = true
+				end
+			end
+
+			if part and adornee and not skip then
+				local distance = root and (part.Position - root.Position).Magnitude or 0
+				if distance <= limit then
+					seen[bed] = true
+					local entry = tracked[bed]
+					if not entry then
+						entry = {}
+						tracked[bed] = entry
+					end
+
+					if self:get("highlight") then
+						if not entry.highlight or not entry.highlight.Parent then
+							entry.highlight = through_wall_highlight(adornee, host, color)
+						end
+						entry.highlight.FillColor = color
+						entry.highlight.OutlineColor = color
+					elseif entry.highlight then
+						entry.highlight:Destroy()
+						entry.highlight = nil
+					end
+
+					if self:get("label") then
+						if not entry.billboard or not entry.billboard.Parent then
+							entry.billboard, entry.label = through_wall_label(part, host, "bed", color, limit)
+						end
+						entry.billboard.MaxDistance = limit
+						if entry.label then
+							entry.label.TextColor3 = color
+							entry.label.Text = root and ("bed  " .. math.floor(distance) .. "m") or "bed"
+						end
+					elseif entry.billboard then
+						entry.billboard:Destroy()
+						entry.billboard = nil
+						entry.label = nil
+					end
+				end
+			end
+		end
+
+		for bed in pairs(tracked) do
+			if not seen[bed] or not bed.Parent then
+				drop(bed)
+			end
+		end
+	end))
+end
+
+-- chest esp
+
+local chest_esp = render:module{name = "chest esp", description = "chests through walls"}
+chest_esp:toggle{name = "team chests", default = true}
+chest_esp:toggle{name = "highlight", default = true}
+chest_esp:slider{name = "max distance", min = 50, max = 1500, default = 600, suffix = " studs"}
+chest_esp:slider{name = "rescan", min = 1, max = 15, default = 3, suffix = " s"}
+chest_esp:color{name = "color", default = Color3.fromRGB(255, 196, 108)}
+
+chest_esp.on_enable = function(self)
+	local host = state.ui.host or state.ui.gui
+	if not host then
+		error("meow: chest esp needs the gui host")
+	end
+
+	local tracked = {}
+	local running = true
+
+	self.bin:add(function()
+		running = false
+		for _, entry in pairs(tracked) do
+			if entry.highlight then
+				entry.highlight:Destroy()
+			end
+			if entry.billboard then
+				entry.billboard:Destroy()
+			end
+		end
+	end)
+
+	local function is_chest(inst)
+		local lower = inst.Name:lower()
+		if not lower:find("chest", 1, true) then
+			return false
+		end
+		if not self:get("team chests") and inst:GetAttribute("ChestOwner") ~= nil then
+			return false
+		end
+		return true
+	end
+
+	-- the descendant walk is spread over frames so a full map does not hitch
+	task.spawn(function()
+		while running do
+			local seen = {}
+			local scanned = 0
+
+			for _, inst in ipairs(workspace:GetDescendants()) do
+				if not running then
+					return
+				end
+				scanned = scanned + 1
+				if scanned % 2500 == 0 then
+					task.wait()
+				end
+
+				if (inst:IsA("Model") or inst:IsA("BasePart")) and is_chest(inst) then
+					local part = inst:IsA("BasePart") and inst or inst:FindFirstChildWhichIsA("BasePart", true)
+					if part then
+						seen[inst] = true
+						local entry = tracked[inst]
+						if not entry then
+							entry = {}
+							tracked[inst] = entry
+							local color = self:get("color")
+							if self:get("highlight") then
+								entry.highlight = through_wall_highlight(inst, host, color)
+							end
+							entry.billboard, entry.label =
+								through_wall_label(part, host, "chest", color, self:get("max distance"))
+						end
+					end
+				end
+			end
+
+			for inst, entry in pairs(tracked) do
+				if not seen[inst] or not inst.Parent then
+					if entry.highlight then
+						entry.highlight:Destroy()
+					end
+					if entry.billboard then
+						entry.billboard:Destroy()
+					end
+					tracked[inst] = nil
+				end
+			end
+
+			for _ = 1, math.floor(self:get("rescan") * 20) do
+				if not running then
+					return
+				end
+				task.wait(0.05)
+			end
+		end
+	end)
 end
 
 -- crosshair

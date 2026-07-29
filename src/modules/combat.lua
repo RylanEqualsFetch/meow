@@ -1,24 +1,331 @@
 -- combat modules
--- generic for now, bedwars specific remote work lands on top of this same api
+-- in bedwars these drive the games own sword controller, everywhere else they
+-- fall back to the generic behaviour
 
 local util = meow.load("src/core/util.lua")
 local manager = meow.load("src/core/manager.lua")
 local notify = meow.load("src/ui/notify.lua")
+local bedwars = meow.load("src/game/bedwars.lua")
 
 local players = util.services.Players
 local user_input = util.services.UserInputService
 
 local combat = manager.category("combat")
 
--- hitbox expander
+local block_studs = 3
 
-local hitbox = combat:module{name = "hitbox", description = "grows enemy root parts"}
--- bedwars rejects hits from far outside the real hitbox, small values only
-hitbox:slider{name = "size", min = 2, max = 7, default = 3.5, decimals = 1}
-hitbox:slider{name = "transparency", min = 0, max = 1, default = 0.75, decimals = 2}
+-- kill aura
+
+local aura = combat:module{name = "kill aura", description = "swings at everything in range"}
+aura:slider{name = "range", min = 8, max = 30, default = 16, decimals = 1, suffix = " studs"}
+aura:slider{name = "swings", min = 1, max = 20, default = 12, suffix = " cps"}
+aura:slider{name = "targets", min = 1, max = 6, default = 2}
+aura:toggle{name = "use game targeting", default = true}
+aura:toggle{name = "hold weapon only", default = true}
+
+aura.on_enable = function(self)
+	if not bedwars.ready() then
+		notify.push("kill aura needs the bedwars sword controller")
+		error("sword controller not found")
+	end
+	self.next_swing = 0
+end
+
+aura.on_tick = function(self)
+	local now = os.clock()
+	if now < (self.next_swing or 0) then
+		return
+	end
+
+	if self:get("hold weapon only") and not bedwars.hand_item() then
+		return
+	end
+
+	local range = self:get("range")
+	local swung = false
+
+	if self:get("use game targeting") then
+		-- getTargetInRegion applies the games own team, sight and match checks,
+		-- the range is the only thing we supply
+		local target = bedwars.target_in_range(range)
+		if target then
+			swung = bedwars.attack(target)
+		end
+	else
+		local found = bedwars.entities_in_range(range)
+		local limit = math.min(#found, self:get("targets"))
+		for index = 1, limit do
+			if bedwars.attack(found[index].entity) then
+				swung = true
+			end
+		end
+	end
+
+	if swung then
+		self.next_swing = now + 1 / math.max(self:get("swings"), 1)
+	else
+		self.next_swing = now + 0.05
+	end
+end
+
+-- reach, feeds the aura range
+
+local reach = combat:module{name = "reach", description = "extends how far a swing lands"}
+reach:slider{name = "studs", min = 0, max = 9, default = 4, decimals = 1}
+reach:toggle{name = "apply to kill aura", default = true}
+
+reach.on_enable = function(self)
+	if not bedwars.ready() then
+		notify.push("reach needs the bedwars sword controller")
+		error("sword controller not found")
+	end
+end
+
+reach.on_tick = function(self)
+	if not self:get("apply to kill aura") or not aura.enabled then
+		return
+	end
+	local aura_range = aura.options["range"]
+	if not aura_range then
+		return
+	end
+	-- the base sword region in this game is 3.8 blocks
+	local wanted = math.min(3.8 * block_studs + self:get("studs"), aura_range.max)
+	if math.abs(aura_range.value - wanted) > 0.05 then
+		aura_range:set(wanted, true)
+	end
+end
+
+-- trigger bot
+
+local trigger = combat:module{name = "trigger bot", description = "swings when a target is under the crosshair"}
+trigger:slider{name = "delay", min = 0, max = 400, default = 60, suffix = " ms"}
+trigger:slider{name = "range", min = 5, max = 30, default = 16, suffix = " studs"}
+trigger:toggle{name = "hold weapon only", default = true}
+
+trigger.on_enable = function(self)
+	self.next_swing = 0
+	self.native = bedwars.ready()
+	if not self.native and type(mouse1click) ~= "function" then
+		notify.push("trigger bot needs bedwars or an executor with mouse1click")
+		error("no attack path")
+	end
+end
+
+trigger.on_tick = function(self)
+	local now = os.clock()
+	if now < (self.next_swing or 0) then
+		return
+	end
+
+	local camera = workspace.CurrentCamera
+	local character = util.character()
+	if not camera or not character then
+		return
+	end
+
+	if self.native and self:get("hold weapon only") and not bedwars.hand_item() then
+		return
+	end
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {character, camera}
+
+	local hit = workspace:Raycast(
+		camera.CFrame.Position,
+		camera.CFrame.LookVector * self:get("range"),
+		params
+	)
+	if not hit or not hit.Instance then
+		return
+	end
+
+	local model = hit.Instance:FindFirstAncestorOfClass("Model")
+	if not model then
+		return
+	end
+
+	if self.native then
+		-- the swing itself goes through the games controller
+		local target = bedwars.target_in_range(self:get("range"))
+		if target and bedwars.entity_instance(target) == model then
+			if bedwars.attack(target) then
+				self.next_swing = now + self:get("delay") / 1000
+			end
+		end
+		return
+	end
+
+	local player = players:GetPlayerFromCharacter(model)
+	if not player or player == util.local_player() or not util.alive(player) then
+		return
+	end
+	if util.same_team(player) then
+		return
+	end
+
+	pcall(mouse1click)
+	self.next_swing = now + self:get("delay") / 1000
+end
+
+-- auto swing, plain swinging without target selection
+
+local auto_swing = combat:module{name = "auto swing", description = "swings the held weapon on a timer"}
+auto_swing:slider{name = "cps", min = 1, max = 20, default = 11}
+auto_swing:toggle{name = "hold left mouse", default = true}
+
+auto_swing.on_enable = function(self)
+	if not bedwars.ready() then
+		notify.push("auto swing needs the bedwars sword controller")
+		error("sword controller not found")
+	end
+	self.next_swing = 0
+end
+
+auto_swing.on_tick = function(self)
+	local now = os.clock()
+	if now < (self.next_swing or 0) then
+		return
+	end
+	if self:get("hold left mouse")
+		and not user_input:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+		return
+	end
+
+	local sword = bedwars.sword()
+	if not sword then
+		return
+	end
+
+	pcall(function()
+		sword:swingSwordInRegion()
+	end)
+	self.next_swing = now + 1 / math.max(self:get("cps"), 1)
+end
+
+-- aim assist
+
+local aim = combat:module{name = "aim assist", description = "smooth camera pull toward a target"}
+aim:slider{name = "fov", min = 20, max = 400, default = 110, suffix = " px"}
+aim:slider{name = "smoothness", min = 1, max = 25, default = 9}
+aim:dropdown{name = "target part", values = {"head", "torso", "root"}, default = "head"}
+aim:toggle{name = "hold right mouse", default = true}
+aim:toggle{name = "visible check", default = true}
+aim:toggle{name = "team check", default = true}
+
+local part_names = {head = "Head", torso = "UpperTorso", root = "HumanoidRootPart"}
+
+local function pick_part(character, kind)
+	local wanted = part_names[kind] or "Head"
+	return character:FindFirstChild(wanted)
+		or character:FindFirstChild("Torso")
+		or character:FindFirstChild("HumanoidRootPart")
+		or character.PrimaryPart
+end
+
+local function has_line_of_sight(camera, part, character)
+	local origin = camera.CFrame.Position
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {util.character(), camera}
+
+	local hit = workspace:Raycast(origin, part.Position - origin, params)
+	if not hit or not hit.Instance then
+		return true
+	end
+	return hit.Instance:IsDescendantOf(character)
+end
+
+-- candidates come from the entity list in bedwars and the player list elsewhere
+local function aim_candidates()
+	local out = {}
+
+	if bedwars.ready() then
+		for _, found in ipairs(bedwars.entities_in_range(300)) do
+			table.insert(out, found.instance)
+		end
+		if #out > 0 then
+			return out
+		end
+	end
+
+	local me = util.local_player()
+	for _, player in ipairs(players:GetPlayers()) do
+		if player ~= me and util.alive(player) then
+			local character = util.character(player)
+			if character then
+				table.insert(out, character)
+			end
+		end
+	end
+	return out
+end
+
+aim.on_enable = function(self)
+	-- the game rewrites the camera every frame, so this has to land after it
+	util.render_step("meow_aim_assist", function()
+		local camera = workspace.CurrentCamera
+		if not camera then
+			return
+		end
+
+		if self:get("hold right mouse")
+			and not user_input:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+			return
+		end
+
+		local viewport = camera.ViewportSize
+		local center = Vector2.new(viewport.X / 2, viewport.Y / 2)
+		local fov = self:get("fov")
+		local kind = self:get("target part")
+		local team_check = self:get("team check")
+		local visible_check = self:get("visible check")
+
+		local best, best_distance
+
+		for _, character in ipairs(aim_candidates()) do
+			local player = players:GetPlayerFromCharacter(character)
+			local skip = team_check and player ~= nil and util.same_team(player)
+			local part = not skip and pick_part(character, kind) or nil
+
+			if part then
+				local screen, on_screen = camera:WorldToViewportPoint(part.Position)
+				if on_screen then
+					local distance = (Vector2.new(screen.X, screen.Y) - center).Magnitude
+					if distance <= fov and (not best_distance or distance < best_distance) then
+						if not visible_check or has_line_of_sight(camera, part, character) then
+							best = part
+							best_distance = distance
+						end
+					end
+				end
+			end
+		end
+
+		if not best then
+			return
+		end
+
+		local goal = CFrame.new(camera.CFrame.Position, best.Position)
+		camera.CFrame = camera.CFrame:Lerp(goal, 1 / math.max(self:get("smoothness"), 1))
+	end, self.bin)
+end
+
+-- hitbox expander, only useful where the client owns hit detection
+
+local hitbox = combat:module{
+	name = "hitbox",
+	description = "grows enemy root parts, no effect where the server checks hits",
+}
+hitbox:slider{name = "size", min = 2, max = 12, default = 5, decimals = 1}
+hitbox:slider{name = "transparency", min = 0, max = 1, default = 0.8, decimals = 2}
 hitbox:toggle{name = "team check", default = true}
 
 hitbox.on_enable = function(self)
+	if bedwars.ready() then
+		notify.push("bedwars checks hits server side, use kill aura and reach")
+	end
 	self.saved = {}
 	self.bin:add(function()
 		for part, data in pairs(self.saved) do
@@ -62,284 +369,6 @@ hitbox.on_tick = function(self)
 			end
 		end
 	end
-end
-
--- trigger bot, clicks when the crosshair sits on an enemy
-
-local trigger = combat:module{name = "trigger bot", description = "clicks when aiming at an enemy"}
-trigger:slider{name = "delay", min = 20, max = 500, default = 90, suffix = " ms"}
-trigger:slider{name = "range", min = 5, max = 25, default = 18, suffix = " studs"}
-trigger:toggle{name = "team check", default = true}
-
-local function click_mouse()
-	local click = mouse1click or (Input and Input.LeftClick)
-	if type(click) == "function" then
-		click()
-		-- aim assist, pulls the camera toward the nearest target inside the fov circle
-
-local aim = combat:module{name = "aim assist", description = "smooth camera pull toward a target"}
-aim:slider{name = "fov", min = 20, max = 400, default = 110, suffix = " px"}
-aim:slider{name = "smoothness", min = 1, max = 25, default = 9}
-aim:dropdown{name = "target part", values = {"head", "torso", "root"}, default = "head"}
-aim:toggle{name = "hold right mouse", default = true}
-aim:toggle{name = "visible check", default = true}
-aim:toggle{name = "team check", default = true}
-
-local part_names = {head = "Head", torso = "UpperTorso", root = "HumanoidRootPart"}
-
-local function pick_part(character, kind)
-	local wanted = part_names[kind] or "Head"
-	return character:FindFirstChild(wanted)
-		or character:FindFirstChild("Torso")
-		or character:FindFirstChild("HumanoidRootPart")
-end
-
-local function has_line_of_sight(camera, part, character)
-	local origin = camera.CFrame.Position
-	local direction = part.Position - origin
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = {util.character(), camera}
-
-	local hit = workspace:Raycast(origin, direction, params)
-	if not hit or not hit.Instance then
-		return true
-	end
-	return hit.Instance:IsDescendantOf(character)
-end
-
-aim.on_tick = function(self)
-	local camera = workspace.CurrentCamera
-	if not camera then
-		return
-	end
-
-	if self:get("hold right mouse")
-		and not user_input:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
-		return
-	end
-
-	local viewport = camera.ViewportSize
-	local center = Vector2.new(viewport.X / 2, viewport.Y / 2)
-	local fov = self:get("fov")
-	local kind = self:get("target part")
-	local team_check = self:get("team check")
-	local visible_check = self:get("visible check")
-	local me = util.local_player()
-
-	local best, best_distance
-
-	for _, player in ipairs(players:GetPlayers()) do
-		if player ~= me and util.alive(player) then
-			if not (team_check and util.same_team(player)) then
-				local character = util.character(player)
-				local part = character and pick_part(character, kind)
-				if part then
-					local screen, on_screen = camera:WorldToViewportPoint(part.Position)
-					if on_screen then
-						local distance = (Vector2.new(screen.X, screen.Y) - center).Magnitude
-						if distance <= fov and (not best_distance or distance < best_distance) then
-							if not visible_check or has_line_of_sight(camera, part, character) then
-								best = part
-								best_distance = distance
-							end
-						end
-					end
-				end
-			end
-		end
-	end
-
-	if not best then
-		return
-	end
-
-	local goal = CFrame.new(camera.CFrame.Position, best.Position)
-	camera.CFrame = camera.CFrame:Lerp(goal, 1 / math.max(self:get("smoothness"), 1))
-end
-
-return true
-	end
-	return false
-end
-
-trigger.on_enable = function(self)
-	if not (mouse1click or (Input and Input.LeftClick)) then
-		notify.push("trigger bot needs an executor with mouse1click")
-		error("no mouse click function")
-	end
-	self.next_click = 0
-end
-
-trigger.on_tick = function(self)
-	local camera = workspace.CurrentCamera
-	local character = util.character()
-	if not camera or not character then
-		return
-	end
-
-	local now = os.clock()
-	if now < (self.next_click or 0) then
-		return
-	end
-
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = {character, camera}
-
-	local hit = workspace:Raycast(camera.CFrame.Position, camera.CFrame.LookVector * self:get("range"), params)
-	if not hit or not hit.Instance then
-		return
-	end
-
-	local model = hit.Instance:FindFirstAncestorOfClass("Model")
-	if not model then
-		return
-	end
-
-	local player = players:GetPlayerFromCharacter(model)
-	if not player or player == util.local_player() then
-		return
-	end
-	if not util.alive(player) then
-		return
-	end
-	if self:get("team check") and util.same_team(player) then
-		return
-	end
-
-	if click_mouse() then
-		self.next_click = now + self:get("delay") / 1000
-	end
-end
-
--- reach, extends tool grip range by scaling the handle hit region
-
-local reach = combat:module{name = "reach", description = "extends the reach of the held tool"}
-reach:slider{name = "studs", min = 0.5, max = 5, default = 2.5, decimals = 1}
-
-reach.on_enable = function(self)
-	self.parts = {}
-	self.bin:add(function()
-		for part, size in pairs(self.parts) do
-			if part and part.Parent then
-				pcall(function()
-					part.Size = size
-				end)
-			end
-		end
-		self.parts = nil
-	end)
-end
-
-reach.on_tick = function(self)
-	local character = util.character()
-	if not character then
-		return
-	end
-
-	local tool = character:FindFirstChildOfClass("Tool")
-	if not tool then
-		return
-	end
-
-	local handle = tool:FindFirstChild("Handle")
-	if not handle or not handle:IsA("BasePart") then
-		return
-	end
-
-	if not self.parts[handle] then
-		self.parts[handle] = handle.Size
-	end
-
-	local base = self.parts[handle]
-	local extra = self:get("studs")
-	handle.Size = Vector3.new(base.X + extra, base.Y + extra, base.Z + extra)
-	handle.Massless = true
-	handle.CanCollide = false
-end
-
--- aim assist, pulls the camera toward the nearest target inside the fov circle
-
-local aim = combat:module{name = "aim assist", description = "smooth camera pull toward a target"}
-aim:slider{name = "fov", min = 20, max = 400, default = 110, suffix = " px"}
-aim:slider{name = "smoothness", min = 1, max = 25, default = 9}
-aim:dropdown{name = "target part", values = {"head", "torso", "root"}, default = "head"}
-aim:toggle{name = "hold right mouse", default = true}
-aim:toggle{name = "visible check", default = true}
-aim:toggle{name = "team check", default = true}
-
-local part_names = {head = "Head", torso = "UpperTorso", root = "HumanoidRootPart"}
-
-local function pick_part(character, kind)
-	local wanted = part_names[kind] or "Head"
-	return character:FindFirstChild(wanted)
-		or character:FindFirstChild("Torso")
-		or character:FindFirstChild("HumanoidRootPart")
-end
-
-local function has_line_of_sight(camera, part, character)
-	local origin = camera.CFrame.Position
-	local direction = part.Position - origin
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = {util.character(), camera}
-
-	local hit = workspace:Raycast(origin, direction, params)
-	if not hit or not hit.Instance then
-		return true
-	end
-	return hit.Instance:IsDescendantOf(character)
-end
-
-aim.on_tick = function(self)
-	local camera = workspace.CurrentCamera
-	if not camera then
-		return
-	end
-
-	if self:get("hold right mouse")
-		and not user_input:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
-		return
-	end
-
-	local viewport = camera.ViewportSize
-	local center = Vector2.new(viewport.X / 2, viewport.Y / 2)
-	local fov = self:get("fov")
-	local kind = self:get("target part")
-	local team_check = self:get("team check")
-	local visible_check = self:get("visible check")
-	local me = util.local_player()
-
-	local best, best_distance
-
-	for _, player in ipairs(players:GetPlayers()) do
-		if player ~= me and util.alive(player) then
-			if not (team_check and util.same_team(player)) then
-				local character = util.character(player)
-				local part = character and pick_part(character, kind)
-				if part then
-					local screen, on_screen = camera:WorldToViewportPoint(part.Position)
-					if on_screen then
-						local distance = (Vector2.new(screen.X, screen.Y) - center).Magnitude
-						if distance <= fov and (not best_distance or distance < best_distance) then
-							if not visible_check or has_line_of_sight(camera, part, character) then
-								best = part
-								best_distance = distance
-							end
-						end
-					end
-				end
-			end
-		end
-	end
-
-	if not best then
-		return
-	end
-
-	local goal = CFrame.new(camera.CFrame.Position, best.Position)
-	camera.CFrame = camera.CFrame:Lerp(goal, 1 / math.max(self:get("smoothness"), 1))
 end
 
 return true

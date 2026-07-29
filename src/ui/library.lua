@@ -544,12 +544,13 @@ function library.create(gui, bin)
 	-- keybind capture, one listener at a time
 	local capturing
 
-	local function start_capture(mod, key_label)
+	local function start_capture(mod, chip, render_key)
 		if capturing then
 			capturing()
 		end
-		key_label.Text = "..."
-		key_label.Visible = true
+
+		chip.Text = "[...]"
+		chip.TextColor3 = theme.accent
 
 		local connection
 		connection = user_input.InputBegan:Connect(function(input, processed)
@@ -560,19 +561,16 @@ function library.create(gui, bin)
 			capturing = nil
 			if input.KeyCode == Enum.KeyCode.Escape or input.KeyCode == Enum.KeyCode.Backspace then
 				mod:set_key(nil)
-				key_label.Text = ""
-				key_label.Visible = false
 			else
 				mod:set_key(input.KeyCode)
-				key_label.Text = util.key_name(input.KeyCode)
 			end
+			render_key()
 		end)
 
 		capturing = function()
 			connection:Disconnect()
 			capturing = nil
-			key_label.Text = mod.key and util.key_name(mod.key) or ""
-			key_label.Visible = mod.key ~= nil
+			render_key()
 		end
 	end
 
@@ -599,7 +597,7 @@ function library.create(gui, bin)
 		local name_label = label(button, {
 			BackgroundTransparency = 1,
 			Position = UDim2.fromOffset(11, 0),
-			Size = UDim2.new(1, -52, 1, 0),
+			Size = UDim2.new(1, -58, 1, 0),
 			Text = mod.name,
 			TextSize = theme.size.body,
 			TextColor3 = theme.text_dim,
@@ -607,62 +605,38 @@ function library.create(gui, bin)
 			TextTruncate = Enum.TextTruncate.AtEnd,
 		}, "medium")
 
-		local key_label = label(button, {
-			BackgroundTransparency = 1,
+		-- a bracket chip you click to bind, right click the row opens the options
+		local key_chip = new("TextButton", {
+			Parent = button,
 			AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, -26, 0.5, 0),
-			Size = UDim2.fromOffset(60, 14),
-			Text = mod.key and util.key_name(mod.key) or "",
+			Position = UDim2.new(1, -9, 0.5, 0),
+			Size = UDim2.fromOffset(34, 18),
+			BackgroundColor3 = theme.surface_light,
+			BackgroundTransparency = 0.35,
+			BorderSizePixel = 0,
+			Text = "[ ]",
 			TextSize = theme.size.tiny - 1,
 			TextColor3 = theme.text_faint,
-			TextXAlignment = Enum.TextXAlignment.Right,
-			Visible = mod.key ~= nil,
-		}, "regular")
+			AutoButtonColor = false,
+		}, {util.corner(theme.round.chip)})
+		theme.apply_font(key_chip, "semibold")
 
-		local options_frame
-		local dots
-
-		if #mod.option_order > 0 then
-			dots = new("TextButton", {
-				Parent = button,
-				AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, -8, 0.5, 0),
-				Size = UDim2.fromOffset(16, 20),
-				BackgroundTransparency = 1,
-				Text = "...",
-				TextSize = theme.size.body,
-				TextColor3 = theme.text_faint,
-				AutoButtonColor = false,
-			})
-			theme.apply_font(dots, "bold")
-
-			options_frame = new("Frame", {
-				Parent = holder,
-				Size = UDim2.new(1, 0, 0, 0),
-				AutomaticSize = Enum.AutomaticSize.Y,
-				BackgroundColor3 = theme.background,
-				BorderSizePixel = 0,
-				Visible = false,
-				LayoutOrder = 2,
-			}, {
-				util.corner(theme.round.item),
-				util.stroke(theme.outline, 1, 0.4),
-				util.list(7),
-				util.padding(9, 10, 10, 10),
-			})
-
-			for _, option in ipairs(mod.option_order) do
-				local builder = controls[option.kind]
-				if builder then
-					builder(options_frame, option, bin)
-				end
+		local function render_key()
+			if mod.key then
+				key_chip.Text = "[" .. util.key_name(mod.key) .. "]"
+				key_chip.TextColor3 = theme.text_dim
+				key_chip.Size = UDim2.fromOffset(
+					math.max(34, util.text_width(key_chip.Text, theme.size.tiny, Enum.Font.Gotham) + 14),
+					18
+				)
+			else
+				key_chip.Text = "[ ]"
+				key_chip.TextColor3 = theme.text_faint
+				key_chip.Size = UDim2.fromOffset(34, 18)
 			end
-
-			bin:add(dots.MouseButton1Click:Connect(function()
-				options_frame.Visible = not options_frame.Visible
-				dots.TextColor3 = options_frame.Visible and theme.text or theme.text_faint
-			end))
 		end
+
+		render_key()
 
 		local function render_state(enabled)
 			tween(button, {BackgroundColor3 = enabled and theme.accent_dark or theme.surface}, 0.14)
@@ -675,8 +649,14 @@ function library.create(gui, bin)
 			mod:toggle_state()
 		end))
 
+		bin:add(key_chip.MouseButton1Click:Connect(function()
+			start_capture(mod, key_chip, render_key)
+		end))
+
 		bin:add(button.MouseButton2Click:Connect(function()
-			start_capture(mod, key_label)
+			if options_frame then
+				options_frame.Visible = not options_frame.Visible
+			end
 		end))
 
 		bin:add(button.MouseEnter:Connect(function()
@@ -697,11 +677,10 @@ function library.create(gui, bin)
 			end
 		end))
 
-		-- keeps the bind label honest after a config load or a clear
+		-- keeps the bind chip honest after a config load or a clear
 		bin:add(manager.changed:connect(function()
 			if not capturing then
-				key_label.Text = mod.key and util.key_name(mod.key) or ""
-				key_label.Visible = mod.key ~= nil
+				render_key()
 			end
 		end))
 
