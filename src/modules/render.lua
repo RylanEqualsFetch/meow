@@ -280,74 +280,6 @@ esp.on_enable = function(self)
 	end))
 end
 
--- fullbright
-
-local fullbright = render:module{name = "fullbright", description = "removes darkness and fog"}
-fullbright:slider{name = "brightness", min = 1, max = 5, default = 3, decimals = 1}
-
--- writing lighting every frame forces a full relight and makes the screen
--- flicker when the window regains focus, so this only writes on a real change
-fullbright.on_enable = function(self)
-	local saved = {
-		Brightness = lighting.Brightness,
-		ClockTime = lighting.ClockTime,
-		FogEnd = lighting.FogEnd,
-		FogStart = lighting.FogStart,
-		GlobalShadows = lighting.GlobalShadows,
-		Ambient = lighting.Ambient,
-		OutdoorAmbient = lighting.OutdoorAmbient,
-	}
-	self.saved = saved
-
-	local writing = false
-
-	local function apply()
-		if writing then
-			return
-		end
-		writing = true
-
-		local wanted = {
-			Brightness = self:get("brightness"),
-			ClockTime = 12,
-			FogEnd = 100000,
-			FogStart = 100000,
-			GlobalShadows = false,
-			Ambient = Color3.fromRGB(178, 178, 178),
-			OutdoorAmbient = Color3.fromRGB(178, 178, 178),
-		}
-
-		for key, value in pairs(wanted) do
-			if lighting[key] ~= value then
-				pcall(function()
-					lighting[key] = value
-				end)
-			end
-		end
-
-		writing = false
-	end
-
-	apply()
-
-	for key in pairs(saved) do
-		self.bin:add(lighting:GetPropertyChangedSignal(key):Connect(apply))
-	end
-	self.bin:add(self.options["brightness"]:listen(apply))
-end
-
-fullbright.on_disable = function(self)
-	if not self.saved then
-		return
-	end
-	for key, value in pairs(self.saved) do
-		pcall(function()
-			lighting[key] = value
-		end)
-	end
-	self.saved = nil
-end
-
 -- bed esp, beds carry a collection service tag in bedwars so they are exact
 
 local bed_esp = render:module{name = "bed esp", description = "beds through walls"}
@@ -825,7 +757,7 @@ objects.on_enable = function(self)
 	end)
 end
 
--- no fog only, lighter than fullbright when a map looks fine otherwise
+-- no fog, clears the haze without touching brightness
 
 local nofog = render:module{name = "no fog", description = "clears atmosphere and fog"}
 
