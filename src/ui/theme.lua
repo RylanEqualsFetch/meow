@@ -15,29 +15,37 @@ local theme = {
 	accent_dark = Color3.fromRGB(128, 86, 168),
 }
 
--- families that ship with the client, no asset downloads
+-- every one of these ships inside the roblox client, verified against the
+-- installed content folder, so none of them fall back to the legacy face.
+-- roblox does not ship inter, builder sans is the closest neo grotesque to it
 theme.families = {
 	["builder sans"] = "rbxasset://fonts/families/BuilderSans.json",
+	["arimo"] = "rbxasset://fonts/families/Arimo.json",
 	["montserrat"] = "rbxasset://fonts/families/Montserrat.json",
 	["nunito"] = "rbxasset://fonts/families/Nunito.json",
 	["roboto"] = "rbxasset://fonts/families/Roboto.json",
-	["gotham"] = "rbxasset://fonts/families/GothamSSm.json",
-	["ubuntu"] = "rbxasset://fonts/families/Ubuntu.json",
+	["titillium"] = "rbxasset://fonts/families/TitilliumWeb.json",
 	["source sans"] = "rbxasset://fonts/families/SourceSansPro.json",
+	["ubuntu"] = "rbxasset://fonts/families/Ubuntu.json",
+	["builder mono"] = "rbxasset://fonts/families/BuilderMono.json",
 }
 
 theme.family_order = {
 	"builder sans",
+	"arimo",
 	"montserrat",
 	"nunito",
 	"roboto",
-	"gotham",
-	"ubuntu",
+	"titillium",
 	"source sans",
+	"ubuntu",
+	"builder mono",
 }
 
--- montserrat by default, the dropdown in settings swaps it live
-theme.family = "montserrat"
+theme.family = "builder sans"
+
+-- a font family asset id, set this to run a face roblox does not ship, inter included
+theme.custom_family = nil
 
 local weights = {
 	regular = Enum.FontWeight.Regular,
@@ -51,9 +59,57 @@ local font_targets = {}
 local accent_hooks = {}
 local font_hooks = {}
 
+-- text sizes and corner radii live here so the whole ui scales from one place
+theme.size = {
+	tiny = 12,
+	small = 13,
+	body = 14,
+	title = 16,
+	large = 18,
+}
+
+theme.round = {
+	panel = 6,
+	item = 5,
+	chip = 4,
+}
+
 function theme.font(weight)
-	local family = theme.families[theme.family] or theme.families["builder sans"]
+	local family = theme.custom_family or theme.families[theme.family] or theme.families["builder sans"]
 	return Font.new(family, weights[weight or "regular"] or Enum.FontWeight.Regular)
+end
+
+local function refresh_faces()
+	for index = #font_targets, 1, -1 do
+		local target = font_targets[index]
+		local ok = pcall(function()
+			target.inst.FontFace = theme.font(target.weight)
+		end)
+		if not ok then
+			table.remove(font_targets, index)
+		end
+	end
+
+	for index = #font_hooks, 1, -1 do
+		local ok = pcall(font_hooks[index])
+		if not ok then
+			table.remove(font_hooks, index)
+		end
+	end
+end
+
+-- point the whole ui at an uploaded font family asset, nil clears it
+function theme.set_custom_family(id)
+	if id == nil or id == "" or id == 0 then
+		theme.custom_family = nil
+	else
+		local text = tostring(id)
+		if text:match("^%d+$") then
+			text = "rbxassetid://" .. text
+		end
+		theme.custom_family = text
+	end
+	refresh_faces()
 end
 
 -- sets the face now and keeps it in sync when the family changes
@@ -74,22 +130,7 @@ function theme.set_family(name)
 		return
 	end
 	theme.family = name
-	for index = #font_targets, 1, -1 do
-		local target = font_targets[index]
-		local ok = pcall(function()
-			target.inst.FontFace = theme.font(target.weight)
-		end)
-		if not ok then
-			table.remove(font_targets, index)
-		end
-	end
-
-	for index = #font_hooks, 1, -1 do
-		local ok = pcall(font_hooks[index])
-		if not ok then
-			table.remove(font_hooks, index)
-		end
-	end
+	refresh_faces()
 end
 
 -- tint an instance property with the accent so it follows theme changes

@@ -53,7 +53,7 @@ function notify.push(text, duration)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 	}, {
-		util.corner(7),
+		util.corner(theme.round.item),
 		util.stroke(theme.outline, 1, 0.3),
 	})
 
@@ -72,7 +72,7 @@ function notify.push(text, duration)
 		Position = UDim2.fromOffset(12, 0),
 		Size = UDim2.new(1, -18, 1, 0),
 		Text = text,
-		TextSize = 13,
+		TextSize = theme.size.body,
 		TextColor3 = theme.text,
 		TextTransparency = 1,
 		TextXAlignment = Enum.TextXAlignment.Left,

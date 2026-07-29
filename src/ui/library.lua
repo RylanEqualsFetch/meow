@@ -5,6 +5,7 @@ local theme = meow.load("src/ui/theme.lua")
 local manager = meow.load("src/core/manager.lua")
 local state = meow.load("src/core/state.lua")
 local logo = meow.load("src/ui/logo.lua")
+local grid = meow.load("src/ui/grid.lua")
 
 local new = util.new
 local tween = util.tween
@@ -12,10 +13,10 @@ local user_input = util.services.UserInputService
 
 local library = {}
 
-local nav_width = 208
+local nav_width = 214
 local nav_x = 24
 local nav_y = 60
-local column_width = 212
+local column_width = 222
 local column_gap = 10
 local column_max_body = 430
 
@@ -79,7 +80,7 @@ function controls.toggle(parent, option, bin)
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, -34, 1, 0),
 		Text = option.name,
-		TextSize = 12,
+		TextSize = theme.size.tiny,
 		TextColor3 = theme.text_dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
@@ -92,7 +93,7 @@ function controls.toggle(parent, option, bin)
 		Size = UDim2.fromOffset(14, 14),
 		BackgroundColor3 = theme.surface_light,
 		BorderSizePixel = 0,
-	}, {util.corner(4)})
+	}, {util.corner(theme.round.chip)})
 
 	local check = new("Frame", {
 		Parent = box,
@@ -141,7 +142,7 @@ function controls.slider(parent, option, bin)
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, -62, 0, 15),
 		Text = option.name,
-		TextSize = 12,
+		TextSize = theme.size.tiny,
 		TextColor3 = theme.text_dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
@@ -153,7 +154,7 @@ function controls.slider(parent, option, bin)
 		Position = UDim2.new(1, 0, 0, 0),
 		Size = UDim2.fromOffset(62, 15),
 		Text = tostring(option.value) .. option.suffix,
-		TextSize = 12,
+		TextSize = theme.size.tiny,
 		TextColor3 = theme.text,
 		TextXAlignment = Enum.TextXAlignment.Right,
 	}, "semibold")
@@ -212,14 +213,14 @@ function controls.dropdown(parent, option, bin)
 		Text = "",
 		AutoButtonColor = false,
 		LayoutOrder = 1,
-	}, {util.corner(5)})
+	}, {util.corner(theme.round.item)})
 
 	label(header, {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(8, 0),
 		Size = UDim2.new(0.45, 0, 1, 0),
 		Text = option.name,
-		TextSize = 12,
+		TextSize = theme.size.tiny,
 		TextColor3 = theme.text_dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
@@ -231,7 +232,7 @@ function controls.dropdown(parent, option, bin)
 		Position = UDim2.new(1, -8, 0, 0),
 		Size = UDim2.new(0.55, -12, 1, 0),
 		Text = "",
-		TextSize = 12,
+		TextSize = theme.size.tiny,
 		TextColor3 = theme.text,
 		TextXAlignment = Enum.TextXAlignment.Right,
 		TextTruncate = Enum.TextTruncate.AtEnd,
@@ -286,11 +287,11 @@ function controls.dropdown(parent, option, bin)
 			BackgroundColor3 = theme.surface,
 			BorderSizePixel = 0,
 			Text = "  " .. entry,
-			TextSize = 12,
+			TextSize = theme.size.tiny,
 			TextColor3 = theme.text_dim,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			AutoButtonColor = false,
-		}, {util.corner(4)})
+		}, {util.corner(theme.round.chip)})
 		theme.apply_font(button, "regular")
 
 		entries[entry] = button
@@ -348,7 +349,7 @@ function controls.color(parent, option, bin)
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, -38, 1, 0),
 		Text = option.name,
-		TextSize = 12,
+		TextSize = theme.size.tiny,
 		TextColor3 = theme.text_dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}, "regular")
@@ -360,7 +361,7 @@ function controls.color(parent, option, bin)
 		Size = UDim2.fromOffset(28, 14),
 		BackgroundColor3 = option.value,
 		BorderSizePixel = 0,
-	}, {util.corner(4), util.stroke(theme.outline, 1, 0.3)})
+	}, {util.corner(theme.round.chip), util.stroke(theme.outline, 1, 0.3)})
 
 	local panel = new("Frame", {
 		Parent = row,
@@ -376,7 +377,7 @@ function controls.color(parent, option, bin)
 		BackgroundColor3 = Color3.fromRGB(255, 0, 0),
 		BorderSizePixel = 0,
 		ClipsDescendants = true,
-	}, {util.corner(5)})
+	}, {util.corner(theme.round.item)})
 
 	new("Frame", {
 		Parent = square,
@@ -416,7 +417,7 @@ function controls.color(parent, option, bin)
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ZIndex = 4,
-	}, {util.corner(4), util.stroke(Color3.new(1, 1, 1), 2, 0)})
+	}, {util.corner(theme.round.chip), util.stroke(Color3.new(1, 1, 1), 2, 0)})
 
 	local hue_bar = new("Frame", {
 		Parent = panel,
@@ -425,7 +426,7 @@ function controls.color(parent, option, bin)
 		BackgroundColor3 = Color3.new(1, 1, 1),
 		BorderSizePixel = 0,
 	}, {
-		util.corner(5),
+		util.corner(theme.round.item),
 		new("UIGradient", {
 			Color = ColorSequence.new({
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
@@ -491,10 +492,10 @@ function controls.button(parent, option, bin)
 		BackgroundColor3 = theme.surface_light,
 		BorderSizePixel = 0,
 		Text = option.name,
-		TextSize = 12,
+		TextSize = theme.size.tiny,
 		TextColor3 = theme.text,
 		AutoButtonColor = false,
-	}, {util.corner(5)})
+	}, {util.corner(theme.round.item)})
 	theme.apply_font(button, "medium")
 
 	bin:add(button.MouseEnter:Connect(function()
@@ -517,6 +518,19 @@ end
 
 function library.create(gui, bin)
 	local self = {visible = true, columns = {}, closed = util.signal()}
+
+	local snap_grid = grid.create(gui, bin)
+
+	-- every panel drags on the same grid and snaps to it
+	local drag_opts = {
+		snap = grid.spacing,
+		on_start = function()
+			snap_grid:show()
+		end,
+		on_end = function()
+			snap_grid:hide()
+		end,
+	}
 
 	local root = new("Frame", {
 		Name = "ui",
@@ -574,20 +588,20 @@ function library.create(gui, bin)
 
 		local button = new("TextButton", {
 			Parent = holder,
-			Size = UDim2.new(1, 0, 0, 30),
+			Size = UDim2.new(1, 0, 0, 33),
 			BackgroundColor3 = theme.surface,
 			BorderSizePixel = 0,
 			Text = "",
 			AutoButtonColor = false,
 			LayoutOrder = 1,
-		}, {util.corner(6)})
+		}, {util.corner(theme.round.item)})
 
 		local name_label = label(button, {
 			BackgroundTransparency = 1,
 			Position = UDim2.fromOffset(11, 0),
 			Size = UDim2.new(1, -52, 1, 0),
 			Text = mod.name,
-			TextSize = 13,
+			TextSize = theme.size.body,
 			TextColor3 = theme.text_dim,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextTruncate = Enum.TextTruncate.AtEnd,
@@ -599,7 +613,7 @@ function library.create(gui, bin)
 			Position = UDim2.new(1, -26, 0.5, 0),
 			Size = UDim2.fromOffset(60, 14),
 			Text = mod.key and util.key_name(mod.key) or "",
-			TextSize = 11,
+			TextSize = theme.size.tiny - 1,
 			TextColor3 = theme.text_faint,
 			TextXAlignment = Enum.TextXAlignment.Right,
 			Visible = mod.key ~= nil,
@@ -616,7 +630,7 @@ function library.create(gui, bin)
 				Size = UDim2.fromOffset(16, 20),
 				BackgroundTransparency = 1,
 				Text = "...",
-				TextSize = 14,
+				TextSize = theme.size.body,
 				TextColor3 = theme.text_faint,
 				AutoButtonColor = false,
 			})
@@ -631,7 +645,7 @@ function library.create(gui, bin)
 				Visible = false,
 				LayoutOrder = 2,
 			}, {
-				util.corner(6),
+				util.corner(theme.round.item),
 				util.stroke(theme.outline, 1, 0.4),
 				util.list(7),
 				util.padding(9, 10, 10, 10),
@@ -712,13 +726,13 @@ function library.create(gui, bin)
 			ClipsDescendants = true,
 			Visible = saved.open ~= false,
 		}, {
-			util.corner(10),
+			util.corner(theme.round.panel),
 			util.stroke(theme.outline, 1, 0.15),
 		})
 
 		local header = new("TextButton", {
 			Parent = frame,
-			Size = UDim2.new(1, 0, 0, 34),
+			Size = UDim2.new(1, 0, 0, 36),
 			BackgroundTransparency = 1,
 			Text = "",
 			AutoButtonColor = false,
@@ -738,7 +752,7 @@ function library.create(gui, bin)
 			Position = UDim2.fromOffset(23, 0),
 			Size = UDim2.new(1, -60, 1, 0),
 			Text = category.name,
-			TextSize = 13,
+			TextSize = theme.size.title,
 			TextColor3 = theme.text,
 			TextXAlignment = Enum.TextXAlignment.Left,
 		}, "semibold")
@@ -749,7 +763,7 @@ function library.create(gui, bin)
 			Position = UDim2.new(1, -28, 0.5, 0),
 			Size = UDim2.fromOffset(24, 14),
 			Text = tostring(#category.modules),
-			TextSize = 11,
+			TextSize = theme.size.tiny - 1,
 			TextColor3 = theme.text_faint,
 			TextXAlignment = Enum.TextXAlignment.Right,
 		}, "regular")
@@ -761,7 +775,7 @@ function library.create(gui, bin)
 			Size = UDim2.fromOffset(14, 14),
 			BackgroundTransparency = 1,
 			Text = "^",
-			TextSize = 13,
+			TextSize = theme.size.small,
 			TextColor3 = theme.text_faint,
 			AutoButtonColor = false,
 		})
@@ -769,7 +783,7 @@ function library.create(gui, bin)
 
 		local body = new("ScrollingFrame", {
 			Parent = frame,
-			Position = UDim2.fromOffset(0, 34),
+			Position = UDim2.fromOffset(0, 36),
 			Size = UDim2.new(1, 0, 0, 0),
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
@@ -793,20 +807,20 @@ function library.create(gui, bin)
 		local function resize()
 			if collapsed then
 				body.Visible = false
-				tween(frame, {Size = UDim2.fromOffset(column_width, 34)}, 0.14)
+				tween(frame, {Size = UDim2.fromOffset(column_width, 36)}, 0.14)
 				return
 			end
 			body.Visible = true
 			local content = layout.AbsoluteContentSize.Y + 12
 			local height = math.min(content, column_max_body)
 			body.Size = UDim2.new(1, 0, 0, height)
-			tween(frame, {Size = UDim2.fromOffset(column_width, 34 + height)}, 0.14)
+			tween(frame, {Size = UDim2.fromOffset(column_width, 36 + height)}, 0.14)
 		end
 
 		resize()
 		bin:add(layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize))
 
-		util.drag(frame, header, bin)
+		util.drag(frame, header, bin, drag_opts)
 
 		local column = {frame = frame, category = category.name}
 
@@ -864,7 +878,7 @@ function library.create(gui, bin)
 		BackgroundTransparency = 0.05,
 		BorderSizePixel = 0,
 	}, {
-		util.corner(12),
+		util.corner(theme.round.panel),
 		util.stroke(theme.outline, 1, 0.15),
 		util.list(0),
 		util.padding(0, 12, 0, 0),
@@ -885,12 +899,12 @@ function library.create(gui, bin)
 		Position = UDim2.new(1, -14, 0, 22),
 		Size = UDim2.fromOffset(70, 14),
 		Text = meow.version,
-		TextSize = 11,
+		TextSize = theme.size.tiny - 1,
 		TextColor3 = theme.text_faint,
 		TextXAlignment = Enum.TextXAlignment.Right,
 	}, "regular")
 
-	util.drag(nav, nav_header, bin)
+	util.drag(nav, nav_header, bin, drag_opts)
 
 	local function section(title, order)
 		local holder = new("Frame", {
@@ -906,7 +920,7 @@ function library.create(gui, bin)
 				BackgroundTransparency = 1,
 				Size = UDim2.new(1, 0, 0, 18),
 				Text = title,
-				TextSize = 10,
+				TextSize = theme.size.tiny - 2,
 				TextColor3 = theme.text_faint,
 				TextXAlignment = Enum.TextXAlignment.Left,
 				LayoutOrder = 0,
@@ -920,21 +934,21 @@ function library.create(gui, bin)
 	local function nav_row(parent, text, order)
 		local button = new("TextButton", {
 			Parent = parent,
-			Size = UDim2.new(1, 0, 0, 30),
+			Size = UDim2.new(1, 0, 0, 32),
 			BackgroundColor3 = theme.surface,
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
 			Text = "",
 			AutoButtonColor = false,
 			LayoutOrder = order,
-		}, {util.corner(6)})
+		}, {util.corner(theme.round.item)})
 
 		local text_label = label(button, {
 			BackgroundTransparency = 1,
 			Position = UDim2.fromOffset(11, 0),
 			Size = UDim2.new(1, -34, 1, 0),
 			Text = text,
-			TextSize = 13,
+			TextSize = theme.size.body,
 			TextColor3 = theme.text_dim,
 			TextXAlignment = Enum.TextXAlignment.Left,
 		}, "medium")
@@ -945,7 +959,7 @@ function library.create(gui, bin)
 			Position = UDim2.new(1, -10, 0.5, 0),
 			Size = UDim2.fromOffset(12, 14),
 			Text = ">",
-			TextSize = 12,
+			TextSize = theme.size.tiny,
 			TextColor3 = theme.text_faint,
 			TextXAlignment = Enum.TextXAlignment.Right,
 		}, "bold")
@@ -1003,7 +1017,7 @@ function library.create(gui, bin)
 				Size = UDim2.fromOffset(7, 7),
 				BackgroundColor3 = theme.surface_light,
 				BorderSizePixel = 0,
-			}, {util.corner(4)})
+			}, {util.corner(theme.round.chip)})
 
 			local function render(enabled)
 				tween(dot, {BackgroundColor3 = enabled and theme.accent or theme.surface_light}, 0.12)
@@ -1068,6 +1082,8 @@ function library.create(gui, bin)
 		self.visible = visible and true or false
 		root.Visible = self.visible
 	end
+
+	self.grid = snap_grid
 
 	function self:select(name)
 		local column = self.columns[name]

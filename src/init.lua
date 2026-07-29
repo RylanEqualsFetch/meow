@@ -6,6 +6,8 @@ local state = meow.load("src/core/state.lua")
 local manager = meow.load("src/core/manager.lua")
 local config = meow.load("src/core/config.lua")
 local notify = meow.load("src/ui/notify.lua")
+local splash = meow.load("src/ui/splash.lua")
+local fonts = meow.load("src/ui/fonts.lua")
 
 local user_input = util.services.UserInputService
 
@@ -36,6 +38,35 @@ end
 gui.Parent = host
 bin:add(gui)
 state.ui.gui = gui
+state.ui.host = host
+
+local boot = splash.create(gui)
+bin:add(function()
+	pcall(function()
+		boot:finish()
+	end)
+end)
+
+boot:set(0.08, "starting")
+task.wait(0.12)
+
+-- inter is not shipped with roblox, so the faces are downloaded once and wired
+-- up through a generated family manifest. everything still runs without it
+boot:set(0.16, "loading font")
+local family, font_reason = fonts.install(fonts.inter, function(alpha, text)
+	boot:set(0.16 + alpha * 0.2, text)
+end)
+
+if family then
+	theme.families["inter"] = family
+	table.insert(theme.family_order, 1, "inter")
+	theme.family = "inter"
+else
+	warn("meow: inter unavailable, " .. tostring(font_reason))
+end
+
+boot:set(0.42, "loading modules")
+task.wait(0.1)
 
 -- module definitions, load order sets the category order in the window
 local module_files = {
@@ -53,13 +84,15 @@ for _, path in ipairs(module_files) do
 	end
 end
 
--- theme and layout prefs first so the window is built with them already applied
+-- theme and layout prefs next so the window is built with them already applied
 local saved = config.read()
 if saved then
 	config.apply_ui(saved)
 end
 
--- ui, built after the modules so the window can render them
+boot:set(0.62, "building interface")
+task.wait(0.1)
+
 local watermark = meow.load("src/ui/watermark.lua")
 local modulelist = meow.load("src/ui/modulelist.lua")
 local library = meow.load("src/ui/library.lua")
@@ -70,13 +103,18 @@ state.ui.watermark = watermark.create(gui, bin)
 state.ui.list = modulelist.create(gui, bin)
 state.ui.window = library.create(gui, bin)
 
--- closing the window through the x keeps the menu module in sync
+state.ui.watermark:set_visible(false)
+
+-- closing the window through the nav keeps the menu module in sync
 bin:add(state.ui.window.closed:connect(function()
 	local menu = manager.modules["settings/menu"]
 	if menu then
 		menu:set_enabled(false)
 	end
 end))
+
+boot:set(0.84, "restoring config")
+task.wait(0.1)
 
 -- defaults first, then the saved config wins
 for _, mod in ipairs(manager.module_order) do
@@ -90,7 +128,6 @@ if saved then
 end
 
 config.watch(bin)
-
 manager.start(bin)
 
 bin:add(user_input.InputBegan:Connect(function(input, processed)
@@ -120,8 +157,16 @@ function meow.unload()
 	end
 end
 
-local menu_key = manager.modules["settings/menu"]
+boot:set(1, "ready")
+task.wait(0.24)
+boot:finish()
+
+if state.watermark and state.ui.watermark then
+	state.ui.watermark:intro()
+end
+
+local menu = manager.modules["settings/menu"]
 notify.push("meow " .. meow.version .. " loaded, press " ..
-	(menu_key and menu_key.key and util.key_name(menu_key.key) or "right shift") .. " for the menu", 5)
+	(menu and menu.key and util.key_name(menu.key) or "right shift") .. " for the menu", 5)
 
 return true

@@ -216,6 +216,8 @@ esp.on_enable = function(self)
 					if show_name then
 						entry.name.Position = UDim2.fromOffset(center.X, center.Y - height / 2 - 2)
 						entry.name.TextColor3 = color
+						-- streamer mode keeps real names off the screen
+						entry.name.Text = state.streamer and "player" or player.Name
 					end
 
 					local show_distance = self:get("distance")
@@ -317,6 +319,239 @@ fullbright.on_disable = function(self)
 		end)
 	end
 	self.saved = nil
+end
+
+-- crosshair
+
+local crosshair = render:module{name = "crosshair", description = "static crosshair at screen center"}
+crosshair:slider{name = "length", min = 2, max = 20, default = 7}
+crosshair:slider{name = "gap", min = 0, max = 20, default = 4}
+crosshair:slider{name = "thickness", min = 1, max = 5, default = 2}
+crosshair:toggle{name = "dot", default = false}
+crosshair:color{name = "color", default = Color3.fromRGB(255, 255, 255)}
+
+crosshair.on_enable = function(self)
+	local gui = state.ui.gui
+	if not gui then
+		error("meow: crosshair needs the client gui")
+	end
+
+	local holder = new("Frame", {
+		Name = "crosshair",
+		Parent = gui,
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 1,
+	})
+	self.bin:add(holder)
+
+	local arms = {}
+	for index = 1, 4 do
+		arms[index] = new("Frame", {
+			Parent = holder,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BorderSizePixel = 0,
+			BackgroundColor3 = self:get("color"),
+		})
+	end
+
+	local dot = new("Frame", {
+		Parent = holder,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BorderSizePixel = 0,
+		BackgroundColor3 = self:get("color"),
+		Visible = false,
+	}, {util.corner(2)})
+
+	local function layout()
+		local camera = workspace.CurrentCamera
+		local viewport = camera and camera.ViewportSize or Vector2.new(1920, 1080)
+		local cx, cy = viewport.X / 2, viewport.Y / 2
+		local length = self:get("length")
+		local gap = self:get("gap")
+		local thick = self:get("thickness")
+		local color = self:get("color")
+
+		arms[1].Size = UDim2.fromOffset(thick, length)
+		arms[1].Position = UDim2.fromOffset(cx, cy - gap - length / 2)
+		arms[2].Size = UDim2.fromOffset(thick, length)
+		arms[2].Position = UDim2.fromOffset(cx, cy + gap + length / 2)
+		arms[3].Size = UDim2.fromOffset(length, thick)
+		arms[3].Position = UDim2.fromOffset(cx - gap - length / 2, cy)
+		arms[4].Size = UDim2.fromOffset(length, thick)
+		arms[4].Position = UDim2.fromOffset(cx + gap + length / 2, cy)
+
+		for _, arm in ipairs(arms) do
+			arm.BackgroundColor3 = color
+		end
+
+		dot.Visible = self:get("dot")
+		dot.Size = UDim2.fromOffset(thick + 1, thick + 1)
+		dot.Position = UDim2.fromOffset(cx, cy)
+		dot.BackgroundColor3 = color
+	end
+
+	layout()
+	for _, option in ipairs(self.option_order) do
+		self.bin:add(option:listen(layout))
+	end
+	self.bin:add(run_service.RenderStepped:Connect(layout))
+end
+
+-- fov circle, shows the aim assist radius
+
+local fov_circle = render:module{name = "fov circle", description = "draws the aim assist radius"}
+fov_circle:slider{name = "radius", min = 20, max = 400, default = 110, suffix = " px"}
+fov_circle:toggle{name = "match aim assist", default = true}
+fov_circle:slider{name = "thickness", min = 1, max = 4, default = 1}
+fov_circle:color{name = "color", default = Color3.fromRGB(198, 134, 255)}
+
+fov_circle.on_enable = function(self)
+	local gui = state.ui.gui
+	if not gui then
+		error("meow: fov circle needs the client gui")
+	end
+
+	-- a square with a full corner radius is a circle, the stroke draws the ring
+	local circle = new("Frame", {
+		Name = "fov",
+		Parent = gui,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundTransparency = 1,
+		ZIndex = 1,
+	}, {
+		new("UICorner", {CornerRadius = UDim.new(1, 0)}),
+		util.stroke(self:get("color"), self:get("thickness"), 0.25),
+	})
+	self.bin:add(circle)
+
+	local stroke = circle:FindFirstChildOfClass("UIStroke")
+
+	self.bin:add(run_service.RenderStepped:Connect(function()
+		local camera = workspace.CurrentCamera
+		local viewport = camera and camera.ViewportSize or Vector2.new(1920, 1080)
+
+		local radius = self:get("radius")
+		if self:get("match aim assist") then
+			local aim = manager.find("aim assist")
+			if aim then
+				radius = aim:get("fov") or radius
+			end
+		end
+
+		circle.Position = UDim2.fromOffset(viewport.X / 2, viewport.Y / 2)
+		circle.Size = UDim2.fromOffset(radius * 2, radius * 2)
+		stroke.Color = self:get("color")
+		stroke.Thickness = self:get("thickness")
+	end))
+end
+
+-- object esp, labels anything whose name matches a keyword
+
+local objects = render:module{name = "object esp", description = "labels beds, chests and generators"}
+objects:dropdown{
+	name = "keywords",
+	values = {"bed", "chest", "generator", "spawner", "shop", "forge"},
+	default = {"bed", "chest", "generator"},
+	multi = true,
+}
+objects:slider{name = "max distance", min = 50, max = 1500, default = 450, suffix = " studs"}
+objects:slider{name = "rescan", min = 1, max = 15, default = 4, suffix = " s"}
+objects:color{name = "color", default = Color3.fromRGB(126, 217, 141)}
+
+objects.on_enable = function(self)
+	local host = state.ui.host or state.ui.gui
+	if not host then
+		error("meow: object esp needs the gui host")
+	end
+
+	local tags = {}
+	local running = true
+
+	self.bin:add(function()
+		running = false
+		for inst, tag in pairs(tags) do
+			if tag then
+				tag:Destroy()
+			end
+			tags[inst] = nil
+		end
+	end)
+
+	local function matches(name)
+		local lower = name:lower()
+		for _, key in ipairs(self:get("keywords")) do
+			if lower:find(key, 1, true) then
+				return true
+			end
+		end
+		return false
+	end
+
+	local function label_for(inst)
+		local billboard = new("BillboardGui", {
+			Name = "meow_object",
+			Parent = host,
+			Adornee = inst,
+			AlwaysOnTop = true,
+			Size = UDim2.fromOffset(180, 20),
+			StudsOffset = Vector3.new(0, 1.6, 0),
+			MaxDistance = self:get("max distance"),
+		})
+
+		local text = new("TextLabel", {
+			Parent = billboard,
+			BackgroundTransparency = 1,
+			Size = UDim2.fromScale(1, 1),
+			Text = inst.Name:lower(),
+			TextSize = theme.size.small,
+			TextColor3 = self:get("color"),
+			TextStrokeTransparency = 0.45,
+		})
+		theme.apply_font(text, "semibold")
+
+		return billboard
+	end
+
+	-- the descendant walk is spread across frames so a big map does not hitch
+	task.spawn(function()
+		while running do
+			local scanned = 0
+			local seen = {}
+
+			for _, inst in ipairs(workspace:GetDescendants()) do
+				if not running then
+					return
+				end
+				scanned = scanned + 1
+				if scanned % 2500 == 0 then
+					task.wait()
+				end
+				if (inst:IsA("BasePart") or inst:IsA("Model")) and matches(inst.Name) then
+					seen[inst] = true
+					if not tags[inst] then
+						tags[inst] = label_for(inst)
+					end
+				end
+			end
+
+			for inst, tag in pairs(tags) do
+				if not seen[inst] or not inst.Parent then
+					if tag then
+						tag:Destroy()
+					end
+					tags[inst] = nil
+				end
+			end
+
+			for _ = 1, math.floor(self:get("rescan") * 20) do
+				if not running then
+					return
+				end
+				task.wait(0.05)
+			end
+		end
+	end)
 end
 
 -- no fog only, lighter than fullbright when a map looks fine otherwise

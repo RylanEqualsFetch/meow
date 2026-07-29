@@ -6,6 +6,7 @@ local manager = meow.load("src/core/manager.lua")
 local notify = meow.load("src/ui/notify.lua")
 
 local players = util.services.Players
+local user_input = util.services.UserInputService
 
 local combat = manager.category("combat")
 
@@ -74,7 +75,90 @@ local function click_mouse()
 	local click = mouse1click or (Input and Input.LeftClick)
 	if type(click) == "function" then
 		click()
+		-- aim assist, pulls the camera toward the nearest target inside the fov circle
+
+local aim = combat:module{name = "aim assist", description = "smooth camera pull toward a target"}
+aim:slider{name = "fov", min = 20, max = 400, default = 110, suffix = " px"}
+aim:slider{name = "smoothness", min = 1, max = 25, default = 9}
+aim:dropdown{name = "target part", values = {"head", "torso", "root"}, default = "head"}
+aim:toggle{name = "hold right mouse", default = true}
+aim:toggle{name = "visible check", default = true}
+aim:toggle{name = "team check", default = true}
+
+local part_names = {head = "Head", torso = "UpperTorso", root = "HumanoidRootPart"}
+
+local function pick_part(character, kind)
+	local wanted = part_names[kind] or "Head"
+	return character:FindFirstChild(wanted)
+		or character:FindFirstChild("Torso")
+		or character:FindFirstChild("HumanoidRootPart")
+end
+
+local function has_line_of_sight(camera, part, character)
+	local origin = camera.CFrame.Position
+	local direction = part.Position - origin
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {util.character(), camera}
+
+	local hit = workspace:Raycast(origin, direction, params)
+	if not hit or not hit.Instance then
 		return true
+	end
+	return hit.Instance:IsDescendantOf(character)
+end
+
+aim.on_tick = function(self)
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return
+	end
+
+	if self:get("hold right mouse")
+		and not user_input:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+		return
+	end
+
+	local viewport = camera.ViewportSize
+	local center = Vector2.new(viewport.X / 2, viewport.Y / 2)
+	local fov = self:get("fov")
+	local kind = self:get("target part")
+	local team_check = self:get("team check")
+	local visible_check = self:get("visible check")
+	local me = util.local_player()
+
+	local best, best_distance
+
+	for _, player in ipairs(players:GetPlayers()) do
+		if player ~= me and util.alive(player) then
+			if not (team_check and util.same_team(player)) then
+				local character = util.character(player)
+				local part = character and pick_part(character, kind)
+				if part then
+					local screen, on_screen = camera:WorldToViewportPoint(part.Position)
+					if on_screen then
+						local distance = (Vector2.new(screen.X, screen.Y) - center).Magnitude
+						if distance <= fov and (not best_distance or distance < best_distance) then
+							if not visible_check or has_line_of_sight(camera, part, character) then
+								best = part
+								best_distance = distance
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	if not best then
+		return
+	end
+
+	local goal = CFrame.new(camera.CFrame.Position, best.Position)
+	camera.CFrame = camera.CFrame:Lerp(goal, 1 / math.max(self:get("smoothness"), 1))
+end
+
+return true
 	end
 	return false
 end
@@ -173,6 +257,89 @@ reach.on_tick = function(self)
 	handle.Size = Vector3.new(base.X + extra, base.Y + extra, base.Z + extra)
 	handle.Massless = true
 	handle.CanCollide = false
+end
+
+-- aim assist, pulls the camera toward the nearest target inside the fov circle
+
+local aim = combat:module{name = "aim assist", description = "smooth camera pull toward a target"}
+aim:slider{name = "fov", min = 20, max = 400, default = 110, suffix = " px"}
+aim:slider{name = "smoothness", min = 1, max = 25, default = 9}
+aim:dropdown{name = "target part", values = {"head", "torso", "root"}, default = "head"}
+aim:toggle{name = "hold right mouse", default = true}
+aim:toggle{name = "visible check", default = true}
+aim:toggle{name = "team check", default = true}
+
+local part_names = {head = "Head", torso = "UpperTorso", root = "HumanoidRootPart"}
+
+local function pick_part(character, kind)
+	local wanted = part_names[kind] or "Head"
+	return character:FindFirstChild(wanted)
+		or character:FindFirstChild("Torso")
+		or character:FindFirstChild("HumanoidRootPart")
+end
+
+local function has_line_of_sight(camera, part, character)
+	local origin = camera.CFrame.Position
+	local direction = part.Position - origin
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {util.character(), camera}
+
+	local hit = workspace:Raycast(origin, direction, params)
+	if not hit or not hit.Instance then
+		return true
+	end
+	return hit.Instance:IsDescendantOf(character)
+end
+
+aim.on_tick = function(self)
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return
+	end
+
+	if self:get("hold right mouse")
+		and not user_input:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+		return
+	end
+
+	local viewport = camera.ViewportSize
+	local center = Vector2.new(viewport.X / 2, viewport.Y / 2)
+	local fov = self:get("fov")
+	local kind = self:get("target part")
+	local team_check = self:get("team check")
+	local visible_check = self:get("visible check")
+	local me = util.local_player()
+
+	local best, best_distance
+
+	for _, player in ipairs(players:GetPlayers()) do
+		if player ~= me and util.alive(player) then
+			if not (team_check and util.same_team(player)) then
+				local character = util.character(player)
+				local part = character and pick_part(character, kind)
+				if part then
+					local screen, on_screen = camera:WorldToViewportPoint(part.Position)
+					if on_screen then
+						local distance = (Vector2.new(screen.X, screen.Y) - center).Magnitude
+						if distance <= fov and (not best_distance or distance < best_distance) then
+							if not visible_check or has_line_of_sight(camera, part, character) then
+								best = part
+								best_distance = distance
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	if not best then
+		return
+	end
+
+	local goal = CFrame.new(camera.CFrame.Position, best.Position)
+	camera.CFrame = camera.CFrame:Lerp(goal, 1 / math.max(self:get("smoothness"), 1))
 end
 
 return true

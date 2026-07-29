@@ -4,8 +4,11 @@ local util = meow.load("src/core/util.lua")
 local manager = meow.load("src/core/manager.lua")
 local notify = meow.load("src/ui/notify.lua")
 
+local state = meow.load("src/core/state.lua")
+
 local players = util.services.Players
 local user_input = util.services.UserInputService
+local http_service = util.services.HttpService
 
 local utility = manager.category("utility")
 
@@ -112,6 +115,211 @@ rejoin.on_enable = function(self)
 		end)
 	end)
 	task.delay(0.4, function()
+		self:set_enabled(false)
+	end)
+end
+
+-- zoom unlocker
+
+local zoom = utility:module{name = "zoom unlocker", description = "raises the camera zoom limit"}
+zoom:slider{name = "distance", min = 20, max = 500, default = 220, suffix = " studs"}
+
+zoom.on_enable = function(self)
+	local player = util.local_player()
+	self.saved_zoom = player.CameraMaxZoomDistance
+	self.bin:add(function()
+		pcall(function()
+			util.local_player().CameraMaxZoomDistance = self.saved_zoom or 128
+		end)
+	end)
+end
+
+zoom.on_tick = function(self)
+	pcall(function()
+		util.local_player().CameraMaxZoomDistance = self:get("distance")
+	end)
+end
+
+-- freecam, moves the camera without moving the character
+
+local freecam = utility:module{name = "freecam", description = "detaches the camera"}
+freecam:slider{name = "speed", min = 10, max = 250, default = 70}
+
+freecam.on_enable = function(self)
+	local camera = workspace.CurrentCamera
+	if not camera then
+		error("no camera")
+	end
+
+	self.saved_type = camera.CameraType
+	self.saved_subject = camera.CameraSubject
+	camera.CameraType = Enum.CameraType.Scriptable
+
+	self.bin:add(function()
+		local current = workspace.CurrentCamera
+		if current then
+			pcall(function()
+				current.CameraType = self.saved_type or Enum.CameraType.Custom
+				current.CameraSubject = self.saved_subject
+			end)
+		end
+	end)
+end
+
+freecam.on_tick = function(self, delta)
+	local camera = workspace.CurrentCamera
+	if not camera or user_input:GetFocusedTextBox() then
+		return
+	end
+
+	local look = camera.CFrame.LookVector
+	local right = camera.CFrame.RightVector
+	local direction = Vector3.zero
+
+	if user_input:IsKeyDown(Enum.KeyCode.W) then
+		direction = direction + look
+	end
+	if user_input:IsKeyDown(Enum.KeyCode.S) then
+		direction = direction - look
+	end
+	if user_input:IsKeyDown(Enum.KeyCode.D) then
+		direction = direction + right
+	end
+	if user_input:IsKeyDown(Enum.KeyCode.A) then
+		direction = direction - right
+	end
+	if user_input:IsKeyDown(Enum.KeyCode.Space) then
+		direction = direction + Vector3.new(0, 1, 0)
+	end
+	if user_input:IsKeyDown(Enum.KeyCode.LeftControl) then
+		direction = direction - Vector3.new(0, 1, 0)
+	end
+
+	if direction.Magnitude > 0 then
+		camera.CFrame = camera.CFrame + direction.Unit * self:get("speed") * delta
+	end
+end
+
+-- streamer mode, the overlays read this flag
+
+local streamer = utility:module{name = "streamer mode", description = "anonymises names on screen"}
+
+streamer.on_enable = function()
+	state.streamer = true
+end
+
+streamer.on_disable = function()
+	state.streamer = false
+end
+
+-- fps boost
+
+local fps_boost = utility:module{name = "fps boost", description = "drops effects and shadows"}
+fps_boost:toggle{name = "particles", default = true}
+fps_boost:toggle{name = "shadows", default = true}
+fps_boost:toggle{name = "quality level", default = true}
+
+fps_boost.on_enable = function(self)
+	local lighting = util.services.Lighting
+	local saved_shadows = lighting.GlobalShadows
+	local disabled = {}
+
+	if self:get("shadows") then
+		lighting.GlobalShadows = false
+	end
+
+	if self:get("particles") then
+		for _, inst in ipairs(workspace:GetDescendants()) do
+			if inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Smoke")
+				or inst:IsA("Fire") or inst:IsA("Sparkles") then
+				if inst.Enabled then
+					inst.Enabled = false
+					table.insert(disabled, inst)
+				end
+			end
+		end
+	end
+
+	if self:get("quality level") then
+		pcall(function()
+			settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+		end)
+	end
+
+	self.bin:add(function()
+		pcall(function()
+			lighting.GlobalShadows = saved_shadows
+		end)
+		for _, inst in ipairs(disabled) do
+			pcall(function()
+				inst.Enabled = true
+			end)
+		end
+		pcall(function()
+			settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
+		end)
+	end)
+end
+
+-- server hop
+
+local hop = utility:module{name = "server hop", description = "teleports to another public server"}
+hop:slider{name = "min slots", min = 1, max = 10, default = 2, suffix = " free"}
+
+hop.on_enable = function(self)
+	local teleport = util.services.TeleportService
+	local player = util.local_player()
+	local wanted = self:get("min slots")
+
+	notify.push("looking for a server")
+
+	task.spawn(function()
+		local req = (syn and syn.request) or (http and http.request) or http_request or request
+		local url = "https://games.roblox.com/v1/games/"
+			.. tostring(game.PlaceId)
+			.. "/servers/Public?sortOrder=Asc&limit=100"
+
+		local body
+		if req then
+			local ok, res = pcall(req, {Url = url, Method = "GET"})
+			if ok and type(res) == "table" then
+				body = res.Body
+			end
+		end
+		if not body then
+			local ok, result = pcall(function()
+				return game:HttpGet(url, true)
+			end)
+			body = ok and result or nil
+		end
+
+		if not body then
+			notify.push("server list request failed")
+			self:set_enabled(false)
+			return
+		end
+
+		local decoded, data = pcall(function()
+			return http_service:JSONDecode(body)
+		end)
+		if not decoded or type(data) ~= "table" or type(data.data) ~= "table" then
+			notify.push("could not read the server list")
+			self:set_enabled(false)
+			return
+		end
+
+		for _, server in ipairs(data.data) do
+			local free = (server.maxPlayers or 0) - (server.playing or 0)
+			if server.id ~= game.JobId and free >= wanted then
+				notify.push("hopping")
+				pcall(function()
+					teleport:TeleportToPlaceInstance(game.PlaceId, server.id, player)
+				end)
+				return
+			end
+		end
+
+		notify.push("no server matched")
 		self:set_enabled(false)
 	end)
 end

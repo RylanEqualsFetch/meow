@@ -183,10 +183,32 @@ function util.signal()
 	return self
 end
 
-function util.drag(frame, handle, bin)
+-- opts: {snap = pixels, on_start = fn, on_end = fn}
+function util.drag(frame, handle, bin, opts)
 	handle = handle or frame
+	opts = opts or {}
+
 	local dragging = false
 	local start_pos, start_input
+
+	local function place(x, y)
+		local snap = opts.snap
+		if snap and snap > 1 then
+			x = math.floor(x / snap + 0.5) * snap
+			y = math.floor(y / snap + 0.5) * snap
+		end
+		frame.Position = UDim2.new(start_pos.X.Scale, x, start_pos.Y.Scale, y)
+	end
+
+	local function stop()
+		if not dragging then
+			return
+		end
+		dragging = false
+		if opts.on_end then
+			opts.on_end()
+		end
+	end
 
 	bin:add(handle.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -194,13 +216,16 @@ function util.drag(frame, handle, bin)
 			dragging = true
 			start_input = input.Position
 			start_pos = frame.Position
-			local ended
-			ended = input.Changed:Connect(function()
-				if input.UserInputState == Enum.UserInputState.End then
-					dragging = false
-					ended:Disconnect()
-				end
-			end)
+			if opts.on_start then
+				opts.on_start()
+			end
+		end
+	end))
+
+	bin:add(user_input.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			stop()
 		end
 	end))
 
@@ -211,14 +236,11 @@ function util.drag(frame, handle, bin)
 		if input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch then
 			local delta = input.Position - start_input
-			frame.Position = UDim2.new(
-				start_pos.X.Scale,
-				start_pos.X.Offset + delta.X,
-				start_pos.Y.Scale,
-				start_pos.Y.Offset + delta.Y
-			)
+			place(start_pos.X.Offset + delta.X, start_pos.Y.Offset + delta.Y)
 		end
 	end))
+
+	bin:add(stop)
 end
 
 function util.key_name(key)

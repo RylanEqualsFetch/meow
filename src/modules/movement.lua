@@ -245,4 +245,48 @@ spider.on_tick = function(self)
 	end
 end
 
+-- bhop, jumps the moment you land while still moving
+
+local bhop = movement:module{name = "bhop", description = "jumps every time you land"}
+
+bhop.on_tick = function(self)
+	local humanoid = util.humanoid()
+	if not humanoid then
+		return
+	end
+	if humanoid.MoveDirection.Magnitude > 0 and humanoid.FloorMaterial ~= Enum.Material.Air then
+		humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+	end
+end
+
+-- safe walk, kills horizontal speed when there is no floor ahead
+
+local safe_walk = movement:module{name = "safe walk", description = "stops you walking off an edge"}
+safe_walk:slider{name = "look ahead", min = 1, max = 6, default = 2.5, decimals = 1}
+
+safe_walk.on_tick = function(self)
+	local root = util.root()
+	local humanoid = util.humanoid()
+	if not root or not humanoid then
+		return
+	end
+
+	local direction = humanoid.MoveDirection
+	if direction.Magnitude == 0 or humanoid.FloorMaterial == Enum.Material.Air then
+		return
+	end
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {root.Parent}
+
+	local origin = root.Position + direction * self:get("look ahead")
+	local hit = workspace:Raycast(origin, Vector3.new(0, -7, 0), params)
+
+	if not hit then
+		local velocity = root.AssemblyLinearVelocity
+		root.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
+	end
+end
+
 return true

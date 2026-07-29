@@ -20,7 +20,7 @@ local function ping_value()
 	return 0
 end
 
-function watermark.create(gui, bin)
+function watermark.create(gui, bin, opts)
 	local holder = new("Frame", {
 		Name = "watermark",
 		Parent = gui,
@@ -30,7 +30,7 @@ function watermark.create(gui, bin)
 		Size = UDim2.fromOffset(168, 54),
 		BorderSizePixel = 0,
 	}, {
-		util.corner(10),
+		util.corner(theme.round.panel),
 		util.stroke(theme.outline, 1, 0.25),
 		util.padding(8, 8, 12, 12),
 	})
@@ -52,7 +52,7 @@ function watermark.create(gui, bin)
 		Position = UDim2.fromOffset(0, mark.height + 1),
 		Size = UDim2.new(1, 0, 0, 14),
 		Text = "loading",
-		TextSize = 11,
+		TextSize = theme.size.tiny,
 		TextColor3 = theme.text_dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
 	})
@@ -78,6 +78,20 @@ function watermark.create(gui, bin)
 
 	local self = {frame = holder, mark = mark}
 
+	-- slides in from the left once the splash is done
+	function self:intro()
+		local target = holder.Position
+		holder.Position = UDim2.fromOffset(target.X.Offset - 26, target.Y.Offset)
+		holder.BackgroundTransparency = 1
+		accent_bar.BackgroundTransparency = 1
+		stats.TextTransparency = 1
+		holder.Visible = true
+
+		util.tween(holder, {Position = target, BackgroundTransparency = 0.15}, 0.34, Enum.EasingStyle.Quint)
+		util.tween(accent_bar, {BackgroundTransparency = 0}, 0.34)
+		util.tween(stats, {TextTransparency = 0}, 0.34)
+	end
+
 	function self:set_visible(visible)
 		holder.Visible = visible and true or false
 	end
@@ -87,7 +101,7 @@ function watermark.create(gui, bin)
 		holder:Destroy()
 	end
 
-	util.drag(holder, holder, bin)
+	util.drag(holder, holder, bin, opts and opts.drag)
 	return self
 end
 

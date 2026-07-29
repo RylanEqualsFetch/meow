@@ -10,7 +10,7 @@ local tween = util.tween
 local modulelist = {}
 
 local entry_height = 22
-local text_size = 14
+local text_size = theme.size.body
 
 function modulelist.create(gui, bin)
 	local holder = new("Frame", {
@@ -56,7 +56,7 @@ function modulelist.create(gui, bin)
 			BackgroundColor3 = theme.background,
 			BackgroundTransparency = 1,
 			BorderSizePixel = 0,
-		}, {util.corner(5)})
+		}, {util.corner(theme.round.chip)})
 
 		local bar = new("Frame", {
 			Parent = body,
