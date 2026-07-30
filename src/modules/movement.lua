@@ -353,15 +353,66 @@ end
 -- that the client turns into a modifier, so that path is the games own code.
 -- none of this is kit specific, zephyr was never the requirement
 
-local fast = movement:module{name = "fast speed", description = "drives the games movement multiplier"}
-fast:slider{name = "multiplier", min = 1, max = 12, default = 2, decimals = 2}
+-- sprinting in this game is RUN_SPEED, which the client defines as 20 studs, and
+-- cats fly caps itself at 23. so the servers tolerance sits just above sprint,
+-- and a multiplier slider was the wrong control, 12x is 240 studs and of course
+-- that gets corrected. this asks for a speed in studs instead
+local run_speed = 20
+
+local fast = movement:module{name = "fast speed", description = "raises your speed toward the server limit"}
+fast:slider{name = "target speed", min = run_speed, max = 60, default = 23, decimals = 1, suffix = " studs"}
 fast:dropdown{
 	name = "method",
 	values = {"constant", "additive", "potion attribute"},
 	default = "constant",
 }
+fast:toggle{name = "auto tune", default = true}
 fast:toggle{name = "clear speed cap", default = true}
 fast:toggle{name = "zephyr only", default = false}
+
+-- a correction shows up as a single frame displacement far larger than the speed
+-- could produce, because the server teleports you back. when auto tune is on the
+-- target steps down until that stops happening, which finds your real ceiling
+local function watch_for_corrections(self)
+	local run_service = util.services.RunService
+	local last_position, last_stamp
+	local settled = false
+
+	self.bin:add(run_service.Heartbeat:Connect(function()
+		if not self:get("auto tune") or settled then
+			return
+		end
+
+		local root = util.root()
+		if not root then
+			last_position = nil
+			return
+		end
+
+		local now = os.clock()
+		local position = root.Position
+
+		if last_position and last_stamp then
+			local elapsed = math.max(now - last_stamp, 1 / 240)
+			local moved = (position - last_position).Magnitude
+			local allowed = self:get("target speed") * elapsed * 2 + 6
+
+			if moved > allowed then
+				local reduced = math.max(self:get("target speed") - 1, run_speed)
+				if reduced < self:get("target speed") then
+					self.options["target speed"]:set(reduced)
+					notify.push("pulled back, trying " .. tostring(reduced) .. " studs", 3)
+				else
+					settled = true
+					notify.push("corrections at sprint speed, the server is not allowing more", 6)
+				end
+			end
+		end
+
+		last_position = position
+		last_stamp = now
+	end))
+end
 
 local zephyr_names = {"wind_walker", "windwalker", "zephyr"}
 
@@ -383,8 +434,13 @@ local function on_zephyr()
 	return false, true
 end
 
+-- the modifier system wants a multiplier, the slider speaks studs
+local function wanted_multiplier(self)
+	return math.max(self:get("target speed"), run_speed) / run_speed
+end
+
 local function build_properties(self)
-	local value = self:get("multiplier")
+	local value = wanted_multiplier(self)
 	if self:get("method") == "additive" then
 		return {moveSpeedMultiplier = value}
 	end
@@ -404,6 +460,8 @@ fast.on_enable = function(self)
 	end
 
 	local sprint = bedwars.sprint_controller()
+
+	watch_for_corrections(self)
 
 	-- setSpeed clamps to maxSpeed when it is set, clearing it lifts the ceiling
 	if self:get("clear speed cap") and sprint then
@@ -433,12 +491,12 @@ fast.on_enable = function(self)
 
 		local function push()
 			bedwars.elevated(function()
-				util.local_player():SetAttribute("SpeedBoost", self:get("multiplier"))
+				util.local_player():SetAttribute("SpeedBoost", wanted_multiplier(self))
 			end)
 		end
 
 		push()
-		self.bin:add(self.options["multiplier"]:listen(push))
+		self.bin:add(self.options["target speed"]:listen(push))
 		self.bin:add(function()
 			pcall(function()
 				util.local_player():SetAttribute("SpeedBoost", self.saved_boost)
@@ -467,7 +525,7 @@ fast.on_enable = function(self)
 			self.handle = bedwars.add_movement_modifier(build_properties(self))
 		end
 
-		self.bin:add(self.options["multiplier"]:listen(refresh))
+		self.bin:add(self.options["target speed"]:listen(refresh))
 		self.bin:add(self.options["method"]:listen(refresh))
 
 		notify.push("fast speed on through a modifier", 4)
@@ -504,12 +562,12 @@ fast.on_enable = function(self)
 
 	local function push()
 		bedwars.elevated(function()
-			util.local_player():SetAttribute("SpeedBoost", self:get("multiplier"))
+			util.local_player():SetAttribute("SpeedBoost", wanted_multiplier(self))
 		end)
 	end
 
 	push()
-	self.bin:add(self.options["multiplier"]:listen(push))
+	self.bin:add(self.options["target speed"]:listen(push))
 	self.bin:add(function()
 		pcall(function()
 			util.local_player():SetAttribute("SpeedBoost", self.saved_boost)
@@ -529,7 +587,7 @@ fast.on_tick = function(self)
 		return
 	end
 
-	local wanted = self:get("multiplier")
+	local wanted = wanted_multiplier(self)
 	if sprint.moveSpeedMultiplier ~= wanted then
 		bedwars.elevated(function()
 			sprint.moveSpeedMultiplier = wanted
