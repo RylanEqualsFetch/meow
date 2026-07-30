@@ -144,6 +144,21 @@ function bedwars.knit()
 		return nil
 	end
 
+	-- cat requires the knit package directly and that is the correct route on this
+	-- build. the upvalue dig below came from vape, whose bedwars code targets the
+	-- old game, they have since reworked into blockwars
+	local direct = require_instance(dig(
+		replicated,
+		"rbxts_include",
+		"node_modules",
+		"@easy-games",
+		"knit",
+		"src"
+	))
+	if direct and type(direct.KnitClient) == "table" and type(direct.KnitClient.Controllers) == "table" then
+		return remember("knit", direct.KnitClient)
+	end
+
 	local player = players.LocalPlayer
 	local module = dig(player, "PlayerScripts", "TS", "knit")
 
@@ -531,6 +546,13 @@ function bedwars.item_meta()
 
 	local module = dig(replicated, "TS", "item", "item-meta")
 	local exported = require_instance(module)
+
+	-- cat reads the table straight off the module as .items. the upvalue dig below
+	-- is vapes route and it targets the old game, so it is only a fallback now
+	if exported and type(exported.items) == "table" then
+		return remember("item_meta", exported.items)
+	end
+
 	local getter = exported and exported.getItemMeta
 
 	if type(getter) ~= "function" then
@@ -560,6 +582,26 @@ end
 
 function bedwars.projectile_controller()
 	return bedwars.controller("ProjectileController")
+end
+
+function bedwars.balloon_controller()
+	return bedwars.controller("BalloonController")
+end
+
+-- flight is legal to the server while you have an inflated balloon, which is the
+-- whole basis of cats fly. this keeps one inflated and stops it deflating
+function bedwars.inflated_balloons()
+	local character = util.character()
+	if not character then
+		return 0
+	end
+	local ok, value = pcall(function()
+		return character:GetAttribute("InflatedBalloons")
+	end)
+	if ok and type(value) == "number" then
+		return value
+	end
+	return 0
 end
 
 -- the bow offsets vape reads off an upvalue of the beam function

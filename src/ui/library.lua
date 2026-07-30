@@ -752,8 +752,17 @@ function library.create(gui, bin)
 		end
 
 		-- only the name reacts now, no fill and no bar
-		local name_glow = util.stroke(theme.accent, 1, 1)
-		name_glow.Parent = name_label
+		-- contextual, not border. util.stroke uses border mode, which on a text
+		-- label outlines the labels rectangle and drew a square around every
+		-- active module. contextual follows the glyphs, which is the glow
+		local name_glow = new("UIStroke", {
+			Parent = name_label,
+			Color = theme.accent,
+			Thickness = 1,
+			Transparency = 1,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual,
+			LineJoinMode = Enum.LineJoinMode.Round,
+		})
 		theme.tint(name_glow, "Color")
 
 		local function render_state(enabled, instant)

@@ -49,55 +49,152 @@ local function move_input()
 end
 
 -- fly
+-- ported from cat rather than invented. three things make theirs work where a
+-- body velocity does not. the server treats flight as legal while you have an
+-- inflated balloon, so it inflates one and blocks the deflate call. the vertical
+-- force it writes oscillates sign every 0.2 seconds so the climb averages out.
+-- and with no balloon it periodically drops to the floor and back to reset the
+-- air time check. 23 studs is cats own ceiling, not a guess
 
--- the bedwars anticheat rejects anything past about 23 studs a second, every
--- speed value in this file stays under that ceiling on purpose
 local speed_ceiling = 23
 
-local fly = movement:module{name = "fly", description = "free camera relative flight"}
-fly:slider{name = "speed", min = 8, max = speed_ceiling, default = 20}
-fly:toggle{name = "hover", default = true, tooltip = "hold position when no keys are held"}
+local fly = movement:module{name = "fly", description = "balloon backed flight"}
+fly:slider{name = "speed", min = 1, max = speed_ceiling, default = speed_ceiling, suffix = " studs"}
+fly:slider{name = "vertical", min = 10, max = 120, default = 55}
+fly:toggle{name = "use balloons", default = true}
+fly:toggle{name = "pop balloons on stop", default = true}
+fly:toggle{name = "wall check", default = true}
+fly:toggle{name = "ground reset", default = true}
 
-fly.on_enable = function(self)
-	self.velocity = nil
-	self.bin:add(function()
-		if self.velocity then
-			self.velocity:Destroy()
-			self.velocity = nil
-		end
-	end)
+local function horizontal_speed(root)
+	local velocity = root.AssemblyLinearVelocity
+	return (velocity * Vector3.new(1, 0, 1)).Magnitude
 end
 
-fly.on_tick = function(self)
-	local root = util.root()
-	if not root then
-		if self.velocity then
-			self.velocity:Destroy()
-			self.velocity = nil
+fly.on_enable = function(self)
+	local run_service = util.services.RunService
+	local balloons = bedwars.balloon_controller()
+
+	local up, down = 0, 0
+	local air_since = os.clock()
+	local resetting, resume_at, saved_y = false, 0, nil
+
+	-- keep one balloon inflated and stop the game taking it back off us
+	if self:get("use balloons") and balloons then
+		if bedwars.inflated_balloons() == 0 then
+			pcall(function()
+				balloons:inflateBalloon()
+			end)
 		end
-		return
+
+		local original = balloons.deflateBalloon
+		balloons.deflateBalloon = function(...)
+			if fly.enabled then
+				return nil
+			end
+			return original(...)
+		end
+
+		self.bin:add(function()
+			local current = bedwars.balloon_controller()
+			if current and current.deflateBalloon ~= original then
+				current.deflateBalloon = original
+			end
+
+			if self:get("pop balloons on stop") and bedwars.inflated_balloons() > 0 then
+				for _ = 1, 3 do
+					pcall(function()
+						original(current)
+					end)
+				end
+			end
+		end)
 	end
 
-	if not self.velocity or self.velocity.Parent ~= root then
-		if self.velocity then
-			self.velocity:Destroy()
+	self.bin:add(user_input.InputBegan:Connect(function(input)
+		if typing() then
+			return
 		end
-		local body = Instance.new("BodyVelocity")
-		body.Name = "meow_fly"
-		body.MaxForce = Vector3.new(1, 1, 1) * 9e9
-		body.Velocity = Vector3.zero
-		body.Parent = root
-		self.velocity = body
-	end
+		if input.KeyCode == Enum.KeyCode.Space then
+			up = 1
+		elseif input.KeyCode == Enum.KeyCode.LeftShift then
+			down = -1
+		end
+	end))
 
-	local direction = move_input()
-	if direction.Magnitude > 0 then
-		self.velocity.Velocity = direction * self:get("speed")
-	elseif self:get("hover") then
-		self.velocity.Velocity = Vector3.zero
-	else
-		self.velocity.Velocity = Vector3.new(0, -8, 0)
-	end
+	self.bin:add(user_input.InputEnded:Connect(function(input)
+		if input.KeyCode == Enum.KeyCode.Space then
+			up = 0
+		elseif input.KeyCode == Enum.KeyCode.LeftShift then
+			down = 0
+		end
+	end))
+
+	local params = RaycastParams.new()
+	params.RespectCanCollide = true
+
+	self.bin:add(run_service.PreSimulation:Connect(function(delta)
+		local root = util.root()
+		local humanoid = util.humanoid()
+		if not root or not humanoid or humanoid.Health <= 0 then
+			return
+		end
+
+		if humanoid.FloorMaterial ~= Enum.Material.Air then
+			air_since = os.clock()
+		end
+
+		local allowed = bedwars.inflated_balloons() > 0
+
+		-- the sign flip is the point, a constant upward force reads as flight
+		local flip = (os.clock() % 0.4 < 0.2) and -1 or 1
+		local lift = 0.9 + (allowed and 6 or 0) * flip + (up + down) * self:get("vertical") / 55
+
+		local move = humanoid.MoveDirection
+		local speed = horizontal_speed(root)
+		local step = move * math.max(self:get("speed") - speed, 0) * delta
+
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = {root.Parent, workspace.CurrentCamera}
+
+		if self:get("wall check") and step.Magnitude > 0 then
+			local hit = workspace:Raycast(root.Position, step, params)
+			if hit then
+				step = (hit.Position + hit.Normal) - root.Position
+			end
+		end
+
+		-- with no balloon the air time check catches up, so touch down and return
+		if not allowed and self:get("ground reset") then
+			if not resetting and os.clock() - air_since > 1.7 then
+				local ground = workspace:Raycast(root.Position, Vector3.new(0, -1000, 0), params)
+				if ground then
+					resetting = true
+					saved_y = root.Position.Y
+					resume_at = os.clock() + 0.07
+					root.CFrame = CFrame.lookAlong(
+						Vector3.new(root.Position.X, ground.Position.Y + humanoid.HipHeight, root.Position.Z),
+						root.CFrame.LookVector
+					)
+				end
+			elseif resetting then
+				if os.clock() >= resume_at and saved_y then
+					root.CFrame = CFrame.lookAlong(
+						Vector3.new(root.Position.X, saved_y, root.Position.Z),
+						root.CFrame.LookVector
+					)
+					resetting = false
+					saved_y = nil
+					air_since = os.clock()
+				else
+					lift = 0
+				end
+			end
+		end
+
+		root.CFrame = root.CFrame + step
+		root.AssemblyLinearVelocity = (move * speed) + Vector3.new(0, lift, 0)
+	end))
 end
 
 -- speed
@@ -339,33 +436,94 @@ fast.on_enable = function(self)
 		return
 	end
 
-	if not bedwars.movement_modifiers() then
-		notify.push("fast speed needs the bedwars sprint controller")
-		error("movement modifiers not found")
-	end
-
+	-- the modifier host is built during the controllers own startup, so it can be
+	-- unreachable even when knit itself resolved. rather than refusing to enable,
+	-- fall through the other routes and say which one took
 	local handle = bedwars.add_movement_modifier(build_properties(self))
-	if not handle then
-		notify.push("fast speed could not add a movement modifier")
-		error("addModifier failed")
+
+	if handle then
+		self.handle = handle
+		self.bin:add(function()
+			bedwars.remove_movement_modifier(self.handle)
+			self.handle = nil
+		end)
+
+		-- the value is only read during reconcile, so a change swaps the modifier
+		local function refresh()
+			bedwars.remove_movement_modifier(self.handle)
+			self.handle = bedwars.add_movement_modifier(build_properties(self))
+		end
+
+		self.bin:add(self.options["multiplier"]:listen(refresh))
+		self.bin:add(self.options["method"]:listen(refresh))
+
+		notify.push("fast speed on through a modifier", 4)
+		return
 	end
 
-	self.handle = handle
+	-- second route, write the field the controller reads. it is recomputed on the
+	-- next reconcile, so the tick puts it back
+	if sprint then
+		self.saved_multiplier = sprint.moveSpeedMultiplier
+		self.direct = true
+
+		self.bin:add(function()
+			local current = bedwars.sprint_controller()
+			if current then
+				pcall(function()
+					current.moveSpeedMultiplier = self.saved_multiplier or 1
+				end)
+			end
+			self.direct = false
+		end)
+
+		notify.push("fast speed on, writing the multiplier directly", 5)
+		return
+	end
+
+	-- last route, the potion attribute, which needs nothing from knit at all
+	local player = util.local_player()
+	self.saved_boost = player:GetAttribute("SpeedBoost")
+
+	local function push()
+		pcall(function()
+			util.local_player():SetAttribute("SpeedBoost", self:get("multiplier"))
+		end)
+	end
+
+	push()
+	self.bin:add(self.options["multiplier"]:listen(push))
 	self.bin:add(function()
-		bedwars.remove_movement_modifier(self.handle)
-		self.handle = nil
+		pcall(function()
+			util.local_player():SetAttribute("SpeedBoost", self.saved_boost)
+		end)
 	end)
 
-	-- the value is only read during reconcile, so a change swaps the modifier
-	local function refresh()
-		bedwars.remove_movement_modifier(self.handle)
-		self.handle = bedwars.add_movement_modifier(build_properties(self))
+	notify.push("fast speed on through the potion attribute, no sprint controller", 5)
+end
+
+fast.on_tick = function(self)
+	if not self.direct then
+		return
 	end
 
-	self.bin:add(self.options["multiplier"]:listen(refresh))
-	self.bin:add(self.options["method"]:listen(refresh))
+	local sprint = bedwars.sprint_controller()
+	if not sprint then
+		return
+	end
 
-	notify.push("fast speed on, kit is " .. tostring(bedwars.local_kit()), 4)
+	local wanted = self:get("multiplier")
+	if sprint.moveSpeedMultiplier ~= wanted then
+		pcall(function()
+			sprint.moveSpeedMultiplier = wanted
+		end)
+	end
+
+	if self:get("clear speed cap") and sprint.maxSpeed ~= nil then
+		pcall(function()
+			sprint.maxSpeed = nil
+		end)
+	end
 end
 
 -- spinbot, spins the character yaw without moving the camera
