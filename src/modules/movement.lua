@@ -247,19 +247,24 @@ spider.on_tick = function(self)
 	end
 end
 
--- kit speed
--- this drives the games own movement modifier rather than writing WalkSpeed, so
--- the sprint controller recomputes around it instead of stamping it back. a
--- modifier with constantSpeedMultiplier replaces the computed multiplier
--- outright, and setSpeed only clamps when maxSpeed is set, which it is not.
--- zephyr matters because that kit already stacks large speed bonuses, so the
--- servers idea of a legal speed for it is far wider than for anything else
+-- fast speed
+-- three findings drive this. one, the sprint controller owns WalkSpeed and
+-- recomputes it from a modifier list, so writing WalkSpeed directly just gets
+-- stamped back, which is why the plain speed module feels like it fights you.
+-- two, setSpeed only clamps when maxSpeed is set and it is nil by default.
+-- three, the games own speed potion is nothing more than a SpeedBoost attribute
+-- that the client turns into a modifier, so that path is the games own code.
+-- none of this is kit specific, zephyr was never the requirement
 
-local kit_speed = movement:module{name = "kit speed", description = "drives the games movement multiplier"}
-kit_speed:slider{name = "multiplier", min = 1, max = 12, default = 2, decimals = 2}
-kit_speed:toggle{name = "constant override", default = true}
-kit_speed:toggle{name = "zephyr only", default = true}
-kit_speed:toggle{name = "clear speed cap", default = true}
+local fast = movement:module{name = "fast speed", description = "drives the games movement multiplier"}
+fast:slider{name = "multiplier", min = 1, max = 12, default = 2, decimals = 2}
+fast:dropdown{
+	name = "method",
+	values = {"constant", "additive", "potion attribute"},
+	default = "constant",
+}
+fast:toggle{name = "clear speed cap", default = true}
+fast:toggle{name = "zephyr only", default = false}
 
 local zephyr_names = {"wind_walker", "windwalker", "zephyr"}
 
@@ -279,20 +284,15 @@ end
 
 local function build_properties(self)
 	local value = self:get("multiplier")
-	if self:get("constant override") then
-		return {constantSpeedMultiplier = value}
+	if self:get("method") == "additive" then
+		return {moveSpeedMultiplier = value}
 	end
-	return {moveSpeedMultiplier = value}
+	return {constantSpeedMultiplier = value}
 end
 
-kit_speed.on_enable = function(self)
-	if not bedwars.movement_modifiers() then
-		notify.push("kit speed needs the bedwars sprint controller")
-		error("movement modifiers not found")
-	end
-
+fast.on_enable = function(self)
 	if self:get("zephyr only") and not on_zephyr() then
-		notify.push("kit speed is set to zephyr only and you are on " .. tostring(bedwars.local_kit()))
+		notify.push("fast speed is set to zephyr only and you are on " .. tostring(bedwars.local_kit()))
 		error("wrong kit")
 	end
 
@@ -314,9 +314,39 @@ kit_speed.on_enable = function(self)
 		end)
 	end
 
+	-- the potion route sets the attribute the client already listens on, so the
+	-- multiplier is applied by the games own handler rather than by a modifier
+	-- of ours. locally set attributes do not replicate, this is client side
+	if self:get("method") == "potion attribute" then
+		local player = util.local_player()
+		self.saved_boost = player:GetAttribute("SpeedBoost")
+
+		local function push()
+			pcall(function()
+				util.local_player():SetAttribute("SpeedBoost", self:get("multiplier"))
+			end)
+		end
+
+		push()
+		self.bin:add(self.options["multiplier"]:listen(push))
+		self.bin:add(function()
+			pcall(function()
+				util.local_player():SetAttribute("SpeedBoost", self.saved_boost)
+			end)
+		end)
+
+		notify.push("fast speed on through the potion attribute", 4)
+		return
+	end
+
+	if not bedwars.movement_modifiers() then
+		notify.push("fast speed needs the bedwars sprint controller")
+		error("movement modifiers not found")
+	end
+
 	local handle = bedwars.add_movement_modifier(build_properties(self))
 	if not handle then
-		notify.push("kit speed could not add a movement modifier")
+		notify.push("fast speed could not add a movement modifier")
 		error("addModifier failed")
 	end
 
@@ -326,16 +356,16 @@ kit_speed.on_enable = function(self)
 		self.handle = nil
 	end)
 
-	-- the value is read during reconcile, so a change means swapping the modifier
+	-- the value is only read during reconcile, so a change swaps the modifier
 	local function refresh()
 		bedwars.remove_movement_modifier(self.handle)
 		self.handle = bedwars.add_movement_modifier(build_properties(self))
 	end
 
 	self.bin:add(self.options["multiplier"]:listen(refresh))
-	self.bin:add(self.options["constant override"]:listen(refresh))
+	self.bin:add(self.options["method"]:listen(refresh))
 
-	notify.push("kit speed on, kit is " .. tostring(bedwars.local_kit()), 4)
+	notify.push("fast speed on, kit is " .. tostring(bedwars.local_kit()), 4)
 end
 
 -- spinbot, spins the character yaw without moving the camera
