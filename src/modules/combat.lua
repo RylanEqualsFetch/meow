@@ -22,7 +22,11 @@ aura:slider{name = "range", min = 5, max = 40, default = 18, decimals = 1, suffi
 aura:slider{name = "swings", min = 1, max = 20, default = 12, suffix = " cps"}
 aura:slider{name = "targets", min = 1, max = 6, default = 3}
 aura:slider{name = "angle", min = 30, max = 360, default = 360, suffix = " deg"}
-aura:dropdown{name = "method", values = {"silent", "controller", "both"}, default = "silent"}
+aura:dropdown{
+	name = "method",
+	values = {"native", "payload", "controller", "all"},
+	default = "native",
+}
 aura:toggle{name = "wall check", default = false}
 aura:toggle{name = "team check", default = true}
 
@@ -124,11 +128,44 @@ aura.on_tick = function(self)
 	local swung = false
 
 	local method = self:get("method")
-	local use_remote = method == "silent" or method == "both"
-	local use_controller = method == "controller" or method == "both"
+	local all = method == "all"
+	local use_native = all or method == "native"
+	local use_payload = all or method == "payload"
+	local use_controller = all or method == "controller"
 
-	if use_remote and #found > 0 and weapon then
-		local limit = math.min(#found, self:get("targets"))
+	local limit = math.min(#found, self:get("targets"))
+
+	-- native, the game builds and sends the swing itself. the only lie is the
+	-- hand, so the weapon in the packet is our sword while you hold anything
+	if use_native and limit > 0 then
+		-- spoof whenever the best sword is not what the hand reports, so holding a
+		-- wood sword with a diamond in the bag still swings the diamond
+		local spoofed = false
+		local best = bedwars.best_sword()
+		local hand = bedwars.hand_item()
+		local hand_tool = type(hand) == "table" and hand.tool or nil
+
+		if best and best ~= hand_tool then
+			if bedwars.install_hand_spoof() then
+				bedwars.set_hand_spoof(best)
+				spoofed = true
+			end
+		end
+
+		for index = 1, limit do
+			local entity = bedwars.entity_from(found[index].character)
+			if entity and bedwars.send_swing(entity, 0) then
+				swung = true
+			end
+		end
+
+		if spoofed then
+			bedwars.set_hand_spoof(nil)
+		end
+	end
+
+	-- payload, our own hand built packet, the fallback if the native call is gone
+	if use_payload and limit > 0 and weapon then
 		for index = 1, limit do
 			if bedwars.swing_at(found[index].character, weapon) then
 				swung = true
@@ -136,9 +173,8 @@ aura.on_tick = function(self)
 		end
 	end
 
-	-- a sent packet is not a landed hit, so the controller path is not gated on
-	-- the remote failing, it is its own mode and can run alongside
-	if use_controller or (use_remote and not swung) then
+	-- controller, attackEntity, the loud path that was landing hits before
+	if use_controller or (not swung and method ~= "controller") then
 		local target = bedwars.target_in_range(range)
 		if target and bedwars.attack(target) then
 			swung = true

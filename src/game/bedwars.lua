@@ -480,6 +480,36 @@ function bedwars.hand_item()
 	return nil
 end
 
+-- the entity object for a character, sendServerRequest needs one of these
+function bedwars.entity_from(instance)
+	local entity_util = bedwars.entity_util()
+	if not entity_util or not instance then
+		return nil
+	end
+	local ok, entity = pcall(function()
+		return entity_util:getEntity(instance)
+	end)
+	if ok then
+		return entity
+	end
+	return nil
+end
+
+-- the games own send. it reads the weapon out of getHandItem itself, so with the
+-- hand spoofed this produces a swing the client built end to end, which is as
+-- close to a real one as it gets. our own payload builder stays as a fallback
+function bedwars.send_swing(entity, charge)
+	local sword = bedwars.sword()
+	if not sword or not entity or type(sword.sendServerRequest) ~= "function" then
+		return false
+	end
+
+	local ok, result = bedwars.elevated(function()
+		return sword:sendServerRequest(entity, charge or 0, nil)
+	end)
+	return ok and result ~= false
+end
+
 function bedwars.entity_instance(entity)
 	if not entity then
 		return nil
