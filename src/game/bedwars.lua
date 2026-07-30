@@ -1383,6 +1383,8 @@ function bedwars.report()
 		{"sprint controller", bedwars.sprint_controller},
 		{"movement modifiers", bedwars.movement_modifiers},
 		{"block selector", bedwars.block_selector},
+		{"anticheat remotes", bedwars.anticheat_remotes},
+		{"status report event", bedwars.report_status},
 		{"block placer", bedwars.placer},
 		{"entity util", bedwars.entity_util},
 		{"world util", bedwars.world_util},
@@ -1431,6 +1433,49 @@ function bedwars.report()
 		.. ", hand spoof: " .. (bedwars.hand_spoof_active() and "installed" or "off"))
 
 	return lines
+end
+
+-- the anticheat has its own remote table, and the only thing in it is a client to
+-- server event called ReportStatus. so the client tells the server how it is
+-- behaving. nothing in the place file fires it, because the modules that do live
+-- under Modules.anticheat and load separately at runtime
+function bedwars.anticheat_remotes()
+	local hit = fresh("anticheat_remotes")
+	if hit then
+		return hit
+	end
+	if not ready_to_retry("anticheat_remotes") then
+		return nil
+	end
+
+	local module = search_module_cached("anticheat-remotes")
+	local value = module and module.AnticheatRemotes
+	return remember("anticheat_remotes", type(value) == "table" and value or nil)
+end
+
+-- the client side handle for the report event, whatever shape it comes in
+function bedwars.report_status()
+	local remotes = bedwars.anticheat_remotes()
+	if not remotes then
+		return nil
+	end
+
+	local client = remotes.Client or remotes.client
+	if type(client) ~= "table" then
+		return nil
+	end
+
+	local ok, wrapper = pcall(function()
+		if type(client.Get) == "function" then
+			return client:Get("ReportStatus")
+		end
+		return client.ReportStatus
+	end)
+
+	if ok and type(wrapper) == "table" then
+		return wrapper
+	end
+	return nil
 end
 
 -- beds carry a collection service tag in this game, which beats name matching

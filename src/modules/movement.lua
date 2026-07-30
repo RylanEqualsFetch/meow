@@ -360,13 +360,15 @@ end
 local run_speed = 20
 
 local fast = movement:module{name = "fast speed", description = "raises your speed toward the server limit"}
-fast:slider{name = "target speed", min = run_speed, max = 60, default = 23, decimals = 1, suffix = " studs"}
+fast:slider{name = "target speed", min = run_speed, max = 200, default = 23, decimals = 1, suffix = " studs"}
 fast:dropdown{
 	name = "method",
 	values = {"constant", "additive", "potion attribute"},
 	default = "constant",
 }
-fast:toggle{name = "auto tune", default = true}
+-- off by default now. voidware holds about 130 studs with no correction, so the
+-- tuner would walk a working setup back down to sprint for no reason
+fast:toggle{name = "auto tune", default = false}
 fast:toggle{name = "clear speed cap", default = true}
 fast:toggle{name = "zephyr only", default = false}
 

@@ -141,6 +141,89 @@ rejoin.on_enable = function(self)
 	end)
 end
 
+-- silent status
+-- the anticheat remote table holds exactly one thing, ReportStatus, a client to
+-- server event. so your own client is what tells the server how it is behaving.
+-- this stops that send. it is the most likely reason another client can hold a
+-- speed the server would otherwise correct, and it is also the single most
+-- detectable thing in here, because a client that stops reporting is itself a
+-- signal. leave it off unless you are chasing that
+
+local silent_status = utility:module{
+	name = "silent status",
+	description = "stops the client reporting itself to the anticheat",
+}
+silent_status:toggle{name = "block sends", default = true}
+silent_status:toggle{name = "hook remote", default = true}
+
+silent_status.on_enable = function(self)
+	local attached = {}
+
+	-- one, the net wrapper, replace whichever send method it exposes
+	if self:get("block sends") then
+		local wrapper = bedwars.report_status()
+		if wrapper then
+			local saved = {}
+			for _, name in ipairs({"SendToServer", "Fire", "FireServer", "CallServerAsync"}) do
+				if type(wrapper[name]) == "function" then
+					saved[name] = wrapper[name]
+					wrapper[name] = function()
+						return nil
+					end
+				end
+			end
+
+			if next(saved) then
+				table.insert(attached, "wrapper")
+				self.bin:add(function()
+					local current = bedwars.report_status()
+					if current then
+						for name, fn in pairs(saved) do
+							current[name] = fn
+						end
+					end
+				end)
+			end
+		end
+	end
+
+	-- two, the remote instance itself, in case the report goes around the wrapper
+	if self:get("hook remote") and type(hookmetamethod) == "function" then
+		local ok = pcall(function()
+			local old
+			old = hookmetamethod(game, "__namecall", function(this, ...)
+				local method = getnamecallmethod and getnamecallmethod() or ""
+				if (method == "FireServer" or method == "InvokeServer")
+					and typeof(this) == "Instance"
+					and this.Name == "ReportStatus" then
+					return nil
+				end
+				return old(this, ...)
+			end)
+
+			self.bin:add(function()
+				-- restoring a namecall hook is not possible here, the module says so
+				-- rather than pretending it undid it
+			end)
+		end)
+
+		if ok then
+			table.insert(attached, "namecall")
+		end
+	end
+
+	if #attached == 0 then
+		notify.push("silent status found nothing to block, run debug info")
+		error("no report path found")
+	end
+
+	notify.push("silent status blocking through " .. table.concat(attached, " and "), 5)
+
+	if table.find(attached, "namecall") then
+		notify.push("the namecall hook stays until you rejoin, it cannot be undone", 8)
+	end
+end
+
 -- zoom unlocker
 
 local zoom = utility:module{name = "zoom unlocker", description = "raises the camera zoom limit"}
