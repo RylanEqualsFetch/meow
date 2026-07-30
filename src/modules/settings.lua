@@ -216,6 +216,14 @@ local function build_report()
 	return lines
 end
 
+debug_info:toggle{
+	name = "auto report",
+	default = true,
+	callback = function(value)
+		state.auto_report = value
+	end,
+}
+
 debug_info:button{
 	name = "print report",
 	action = function()

@@ -4,6 +4,7 @@ local state = {
 	watermark = true,
 	module_list = true,
 	notifications = true,
+	auto_report = true,
 	nav_x = nil,
 	nav_y = nil,
 	columns = {},

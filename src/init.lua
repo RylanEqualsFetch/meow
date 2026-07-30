@@ -193,4 +193,46 @@ local menu = manager.modules["settings/menu"]
 notify.push("meow " .. meow.version .. " loaded, press " ..
 	(menu and menu.key and util.key_name(menu.key) or "right shift") .. " for the menu", 5)
 
+-- automatic diagnostics
+-- the game requires its own modules over the first few seconds, so this runs
+-- twice, once early and once late enough that anything slow has landed. the full
+-- report goes to the console and only the failures are toasted, so a clean run
+-- costs one line and a broken one names the hook that is missing
+local bedwars = meow.load("src/game/bedwars.lua")
+
+local function auto_report(label)
+	if not state.auto_report then
+		return
+	end
+
+	local lines = bedwars.report()
+
+	print("[meow] report " .. label .. ", version " .. tostring(meow.version))
+	for _, line in ipairs(lines) do
+		print("[meow] " .. line)
+	end
+
+	local missing = {}
+	for _, line in ipairs(lines) do
+		local name = line:match("^(.+): missing$")
+		if name then
+			table.insert(missing, name)
+		end
+	end
+
+	if #missing == 0 then
+		notify.push("all game hooks resolved", 4)
+	else
+		notify.push("missing: " .. table.concat(missing, ", "), 10)
+	end
+end
+
+task.delay(3, function()
+	pcall(auto_report, "early")
+end)
+
+task.delay(15, function()
+	pcall(auto_report, "late")
+end)
+
 return true
