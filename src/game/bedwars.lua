@@ -942,18 +942,68 @@ function bedwars.remove_movement_modifier(handle)
 	end)
 end
 
+function bedwars.kit_controller()
+	return bedwars.controller("KitController")
+end
+
+-- the kit lives on the controller, not on a player attribute. the attribute
+-- named Kit belongs to the lobby podiums, which is why reading it came back nil
 function bedwars.local_kit()
+	local controller = bedwars.kit_controller()
+	if controller then
+		for _, method in ipairs({"getPrimaryActiveKit", "getActiveKit", "getKit"}) do
+			if type(controller[method]) == "function" then
+				local ok, value = pcall(function()
+					return controller[method](controller)
+				end)
+				if ok and value ~= nil and value ~= "" then
+					if type(value) == "table" then
+						value = value.kit or value.name or value[1]
+					end
+					if value ~= nil then
+						return tostring(value)
+					end
+				end
+			end
+		end
+	end
+
 	local player = players.LocalPlayer
-	if not player then
-		return nil
+	local character = util.character()
+
+	for _, holder in ipairs({player, character}) do
+		if holder then
+			for _, name in ipairs({"Kit", "BedwarsKit", "SelectedKit", "kit"}) do
+				local ok, value = pcall(function()
+					return holder:GetAttribute(name)
+				end)
+				if ok and value ~= nil and value ~= "" then
+					return tostring(value)
+				end
+			end
+		end
 	end
-	local ok, kit = pcall(function()
-		return player:GetAttribute("Kit")
-	end)
-	if ok and kit ~= nil then
-		return tostring(kit)
-	end
+
 	return nil
+end
+
+-- returns whether the kit matches, and whether the answer is trustworthy at all
+function bedwars.using_kit(name)
+	local controller = bedwars.kit_controller()
+	if controller and type(controller.isUsingKit) == "function" then
+		local ok, value = pcall(function()
+			return controller:isUsingKit(name)
+		end)
+		if ok and type(value) == "boolean" then
+			return value, true
+		end
+	end
+
+	local kit = bedwars.local_kit()
+	if not kit then
+		return false, false
+	end
+	return kit:lower():find(name:lower(), 1, true) ~= nil, true
 end
 
 -- sword range requests

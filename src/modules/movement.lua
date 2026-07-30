@@ -365,18 +365,22 @@ fast:toggle{name = "zephyr only", default = false}
 
 local zephyr_names = {"wind_walker", "windwalker", "zephyr"}
 
+-- returns matched, and whether the kit could be read at all. an unknown kit is
+-- never treated as a mismatch, refusing to enable because a lookup failed is
+-- worse than running on the wrong kit
 local function on_zephyr()
-	local kit = bedwars.local_kit()
-	if not kit then
-		return false
-	end
-	local lower = kit:lower()
 	for _, name in ipairs(zephyr_names) do
-		if lower:find(name, 1, true) then
-			return true
+		local matched, known = bedwars.using_kit(name)
+		if known and matched then
+			return true, true
 		end
 	end
-	return false
+
+	local kit = bedwars.local_kit()
+	if not kit then
+		return false, false
+	end
+	return false, true
 end
 
 local function build_properties(self)
@@ -388,9 +392,15 @@ local function build_properties(self)
 end
 
 fast.on_enable = function(self)
-	if self:get("zephyr only") and not on_zephyr() then
-		notify.push("fast speed is set to zephyr only and you are on " .. tostring(bedwars.local_kit()))
-		error("wrong kit")
+	if self:get("zephyr only") then
+		local matched, known = on_zephyr()
+		if known and not matched then
+			notify.push("zephyr only is on and your kit reads as " .. tostring(bedwars.local_kit()))
+			error("wrong kit")
+		end
+		if not known then
+			notify.push("could not read your kit, running anyway", 4)
+		end
 	end
 
 	local sprint = bedwars.sprint_controller()
@@ -416,7 +426,10 @@ fast.on_enable = function(self)
 	-- of ours. locally set attributes do not replicate, this is client side
 	if self:get("method") == "potion attribute" then
 		local player = util.local_player()
-		self.saved_boost = player:GetAttribute("SpeedBoost")
+		local read_ok, boost = pcall(function()
+			return player:GetAttribute("SpeedBoost")
+		end)
+		self.saved_boost = read_ok and boost or nil
 
 		local function push()
 			pcall(function()
@@ -481,9 +494,13 @@ fast.on_enable = function(self)
 		return
 	end
 
-	-- last route, the potion attribute, which needs nothing from knit at all
+	-- last route, the potion attribute, which needs nothing from knit at all.
+	-- every call here is guarded so enabling can never fail outright
 	local player = util.local_player()
-	self.saved_boost = player:GetAttribute("SpeedBoost")
+	local read_ok, boost = pcall(function()
+		return player:GetAttribute("SpeedBoost")
+	end)
+	self.saved_boost = read_ok and boost or nil
 
 	local function push()
 		pcall(function()

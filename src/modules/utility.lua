@@ -104,9 +104,10 @@ fps_cap.on_enable = function(self)
 	push()
 	self.bin:add(self.options["limit"]:listen(push))
 	self.bin:add(self.options["unlimited"]:listen(push))
-	self.bin:add(function()
-		setfpscap(60)
-	end)
+
+	-- deliberately nothing on disable. putting the cap back was never wanted,
+	-- turning the module off leaves the frame limit exactly where you set it,
+	-- and unloading the client leaves it too
 end
 
 -- player list logging
