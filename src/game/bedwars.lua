@@ -55,21 +55,40 @@ end
 -- capability Plugin", because our thread identity is not allowed to touch
 -- instances the way the game code expects. cat does the same dance around every
 -- call that reaches into the client
+-- identity 8 is not always the right answer. cat uses 2 when it calls into the
+-- client and 8 elsewhere, and the game has checks that reject the wrong one in
+-- either direction. so this tries the call as is first, then 2, then 8, and
+-- keeps whichever actually went through
 function bedwars.elevated(fn, identity)
+	local ok, result = pcall(fn)
+	if ok then
+		return true, result
+	end
+
 	if type(getthreadidentity) ~= "function" or type(setthreadidentity) ~= "function" then
-		return pcall(fn)
+		return false, result
 	end
 
-	local ok, previous = pcall(getthreadidentity)
-	if not ok then
-		return pcall(fn)
+	local got, previous = pcall(getthreadidentity)
+	if not got then
+		return false, result
 	end
 
-	pcall(setthreadidentity, identity or 8)
-	local called, result = pcall(fn)
-	pcall(setthreadidentity, previous)
+	local order = identity and {identity} or {2, 8}
 
-	return called, result
+	for _, level in ipairs(order) do
+		pcall(setthreadidentity, level)
+		local called, value = pcall(fn)
+		pcall(setthreadidentity, previous)
+
+		if called then
+			bedwars.working_identity = level
+			return true, value
+		end
+		result = value
+	end
+
+	return false, result
 end
 
 -- walks a path off an instance, every step guarded
@@ -1417,11 +1436,19 @@ function bedwars.report()
 	end
 
 	table.insert(lines, "kit: " .. tostring(bedwars.local_kit()))
+	table.insert(lines, "working thread identity: " .. tostring(bedwars.working_identity or "plain"))
 
 	local sprint = bedwars.sprint_controller()
 	if sprint then
 		table.insert(lines, "move multiplier: " .. tostring(sprint.moveSpeedMultiplier)
 			.. ", max speed: " .. tostring(sprint.maxSpeed))
+	end
+
+	-- the number the humanoid is actually running. if this matches your target and
+	-- you still are not fast, the humanoid is not what moves you here
+	local humanoid = util.humanoid()
+	if humanoid then
+		table.insert(lines, "live walkspeed: " .. tostring(humanoid.WalkSpeed))
 	end
 
 	table.insert(lines, "reach request: " .. tostring(bedwars.current_reach()))

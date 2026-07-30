@@ -127,6 +127,8 @@ aura.on_tick = function(self)
 	local found = aura_targets(self, range)
 	local swung = false
 
+	aura.attempts = (aura.attempts or 0) + 1
+
 	local method = self:get("method")
 	local all = method == "all"
 	local use_native = all or method == "native"
@@ -154,7 +156,9 @@ aura.on_tick = function(self)
 
 		for index = 1, limit do
 			local entity = bedwars.entity_from(found[index].character)
+			aura.entities = (aura.entities or 0) + (entity and 1 or 0)
 			if entity and bedwars.send_swing(entity, 0) then
+				aura.native_sends = (aura.native_sends or 0) + 1
 				swung = true
 			end
 		end
@@ -168,6 +172,7 @@ aura.on_tick = function(self)
 	if use_payload and limit > 0 and weapon then
 		for index = 1, limit do
 			if bedwars.swing_at(found[index].character, weapon) then
+				aura.payload_sends = (aura.payload_sends or 0) + 1
 				swung = true
 			end
 		end
@@ -176,7 +181,9 @@ aura.on_tick = function(self)
 	-- controller, attackEntity, the loud path that was landing hits before
 	if use_controller or (not swung and method ~= "controller") then
 		local target = bedwars.target_in_range(range)
+		aura.controller_targets = (aura.controller_targets or 0) + (target and 1 or 0)
 		if target and bedwars.attack(target) then
+			aura.controller_hits = (aura.controller_hits or 0) + 1
 			swung = true
 		end
 	end
@@ -734,6 +741,7 @@ breaker.on_tick = function(self)
 		return
 	end
 
+	breaker.sends = (breaker.sends or 0) + 1
 	bedwars.damage_block(block_position, best_part.Position)
 	self.next_hit = now + 1 / math.max(self:get("rate"), 1)
 end

@@ -388,53 +388,16 @@ esp.on_enable = function(self)
 	end))
 end
 
--- bed esp, beds carry a collection service tag in bedwars so they are exact
+-- bed esp
+-- ported from cat. a BoxHandleAdornment per bed part with AlwaysOnTop, coloured
+-- from the parts own colour, driven off the collection service tag rather than
+-- polled. no billboard and no text, you just see the bed through the wall
 
 local bed_esp = render:module{name = "bed esp", description = "beds through walls"}
-bed_esp:toggle{name = "highlight", default = true}
-bed_esp:toggle{name = "label", default = true}
-bed_esp:toggle{name = "hide own bed", default = true}
-bed_esp:slider{name = "max distance", min = 100, max = 3000, default = 1200, suffix = " studs"}
+bed_esp:slider{name = "transparency", min = 0, max = 0.9, default = 0, decimals = 2}
+bed_esp:toggle{name = "hide own bed", default = false}
+bed_esp:toggle{name = "use bed colors", default = true}
 bed_esp:color{name = "color", default = Color3.fromRGB(255, 122, 162)}
-
-local function through_wall_highlight(adornee, parent, color)
-	local highlight = Instance.new("Highlight")
-	highlight.Name = "meow_esp"
-	-- always on top is what makes it read through geometry
-	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	highlight.FillTransparency = 0.55
-	highlight.OutlineTransparency = 0
-	highlight.FillColor = color
-	highlight.OutlineColor = color
-	highlight.Adornee = adornee
-	highlight.Parent = parent
-	return highlight
-end
-
-local function through_wall_label(adornee, parent, text, color, distance_limit)
-	local billboard = new("BillboardGui", {
-		Name = "meow_esp_tag",
-		Parent = parent,
-		Adornee = adornee,
-		AlwaysOnTop = true,
-		Size = UDim2.fromOffset(180, 20),
-		StudsOffset = Vector3.new(0, 2.4, 0),
-		MaxDistance = distance_limit,
-	})
-
-	local label = new("TextLabel", {
-		Parent = billboard,
-		BackgroundTransparency = 1,
-		Size = UDim2.fromScale(1, 1),
-		Text = text,
-		TextSize = theme.size.small,
-		TextColor3 = color,
-		TextStrokeTransparency = 0.4,
-	})
-	theme.apply_font(label, "semibold")
-
-	return billboard, label
-end
 
 bed_esp.on_enable = function(self)
 	local host = state.ui.host or state.ui.gui
@@ -442,97 +405,99 @@ bed_esp.on_enable = function(self)
 		error("meow: bed esp needs the gui host")
 	end
 
-	local tracked = {}
+	local collection = util.services.CollectionService
+	local folder = Instance.new("Folder")
+	folder.Name = "meow_bed_esp"
+	folder.Parent = host
+	self.bin:add(folder)
 
-	self.bin:add(function()
-		for _, entry in pairs(tracked) do
-			if entry.highlight then
-				entry.highlight:Destroy()
-			end
-			if entry.billboard then
-				entry.billboard:Destroy()
-			end
-		end
-	end)
+	local tracked = {}
 
 	local function drop(bed)
 		local entry = tracked[bed]
-		if not entry then
-			return
+		if entry then
+			entry:Destroy()
+			tracked[bed] = nil
 		end
-		if entry.highlight then
-			entry.highlight:Destroy()
-		end
-		if entry.billboard then
-			entry.billboard:Destroy()
-		end
-		tracked[bed] = nil
 	end
 
-	self.bin:add(run_service.Heartbeat:Connect(function()
-		local color = self:get("color")
-		local limit = self:get("max distance")
-		local root = util.root()
-		local my_team = bedwars.team_of()
-		local seen = {}
-
-		for _, bed in ipairs(bedwars.beds()) do
-			local part = bed:IsA("BasePart") and bed or bed:FindFirstChildWhichIsA("BasePart", true)
-			local adornee = bed:IsA("Model") and bed or part
-
-			local skip = false
-			if self:get("hide own bed") and my_team then
-				local team = bed:GetAttribute("Team") or bed:GetAttribute("team")
-				if team ~= nil and tostring(team) == tostring(my_team) then
-					skip = true
-				end
-			end
-
-			if part and adornee and not skip then
-				local distance = root and (part.Position - root.Position).Magnitude or 0
-				if distance <= limit then
-					seen[bed] = true
-					local entry = tracked[bed]
-					if not entry then
-						entry = {}
-						tracked[bed] = entry
-					end
-
-					if self:get("highlight") then
-						if not entry.highlight or not entry.highlight.Parent then
-							entry.highlight = through_wall_highlight(adornee, host, color)
-						end
-						entry.highlight.FillColor = color
-						entry.highlight.OutlineColor = color
-					elseif entry.highlight then
-						entry.highlight:Destroy()
-						entry.highlight = nil
-					end
-
-					if self:get("label") then
-						if not entry.billboard or not entry.billboard.Parent then
-							entry.billboard, entry.label = through_wall_label(part, host, "bed", color, limit)
-						end
-						entry.billboard.MaxDistance = limit
-						if entry.label then
-							entry.label.TextColor3 = color
-							entry.label.Text = root and ("bed  " .. math.floor(distance) .. "m") or "bed"
-						end
-					elseif entry.billboard then
-						entry.billboard:Destroy()
-						entry.billboard = nil
-						entry.label = nil
-					end
-				end
-			end
-		end
-
+	self.bin:add(function()
 		for bed in pairs(tracked) do
-			if not seen[bed] or not bed.Parent then
-				drop(bed)
+			drop(bed)
+		end
+	end)
+
+	local function added(bed)
+		if not self.enabled or tracked[bed] then
+			return
+		end
+
+		if self:get("hide own bed") then
+			local team = bed:GetAttribute("Team") or bed:GetAttribute("team")
+			local mine = bedwars.team_of()
+			if team ~= nil and mine ~= nil and tostring(team) == tostring(mine) then
+				return
 			end
 		end
+
+		local group = Instance.new("Folder")
+		group.Parent = folder
+		tracked[bed] = group
+
+		local parts = bed:GetChildren()
+		table.sort(parts, function(a, b)
+			return a.Name > b.Name
+		end)
+
+		for _, part in ipairs(parts) do
+			if part:IsA("BasePart") and part.Name ~= "Blanket" then
+				local handle = Instance.new("BoxHandleAdornment")
+				handle.Size = part.Size + Vector3.new(0.01, 0.01, 0.01)
+				handle.AlwaysOnTop = true
+				handle.ZIndex = 2
+				handle.Visible = true
+				handle.Adornee = part
+				handle.Transparency = self:get("transparency")
+				handle.Color3 = self:get("use bed colors") and part.Color or self:get("color")
+
+				-- the legs sit lower and read wrong at full height, cat trims them
+				if part.Name == "Legs" then
+					handle.Color3 = self:get("use bed colors")
+						and Color3.fromRGB(167, 112, 64)
+						or self:get("color")
+					handle.Size = part.Size + Vector3.new(0.01, -1, 0.01)
+					handle.CFrame = CFrame.new(0, -0.4, 0)
+					handle.ZIndex = 0
+				end
+
+				handle.Parent = group
+			end
+		end
+	end
+
+	self.bin:add(collection:GetInstanceAddedSignal("bed"):Connect(function(bed)
+		task.delay(0.2, added, bed)
 	end))
+
+	self.bin:add(collection:GetInstanceRemovedSignal("bed"):Connect(drop))
+
+	for _, bed in ipairs(collection:GetTagged("bed")) do
+		added(bed)
+	end
+
+	-- colour and transparency apply live by rebuilding, it is a handful of parts
+	local function rebuild()
+		for bed in pairs(tracked) do
+			drop(bed)
+		end
+		for _, bed in ipairs(collection:GetTagged("bed")) do
+			added(bed)
+		end
+	end
+
+	self.bin:add(self.options["transparency"]:listen(rebuild))
+	self.bin:add(self.options["use bed colors"]:listen(rebuild))
+	self.bin:add(self.options["color"]:listen(rebuild))
 end
 
 -- chest esp

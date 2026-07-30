@@ -207,6 +207,21 @@ local function build_report()
 		table.insert(lines, line)
 	end
 
+	local aura = manager_ref.find("kill aura")
+	if aura then
+		table.insert(lines, "aura ticks: " .. tostring(aura.attempts or 0)
+			.. ", entities: " .. tostring(aura.entities or 0)
+			.. ", native: " .. tostring(aura.native_sends or 0)
+			.. ", payload: " .. tostring(aura.payload_sends or 0)
+			.. ", controller: " .. tostring(aura.controller_hits or 0)
+			.. " of " .. tostring(aura.controller_targets or 0))
+	end
+
+	local breaker = manager_ref.find("bed breaker")
+	if breaker then
+		table.insert(lines, "bed breaker sends: " .. tostring(breaker.sends or 0))
+	end
+
 	local projectile = manager_ref.find("projectile aimbot")
 	if projectile then
 		table.insert(lines, "projectile hook calls: " .. tostring(projectile.calls or 0)
