@@ -50,6 +50,28 @@ function bedwars.forget()
 	entity_cache = {value = nil, stamp = 0}
 end
 
+-- calls into the games own code from an elevated thread.
+-- without this you get "the current thread cannot access Instance, lacking
+-- capability Plugin", because our thread identity is not allowed to touch
+-- instances the way the game code expects. cat does the same dance around every
+-- call that reaches into the client
+function bedwars.elevated(fn, identity)
+	if type(getthreadidentity) ~= "function" or type(setthreadidentity) ~= "function" then
+		return pcall(fn)
+	end
+
+	local ok, previous = pcall(getthreadidentity)
+	if not ok then
+		return pcall(fn)
+	end
+
+	pcall(setthreadidentity, identity or 8)
+	local called, result = pcall(fn)
+	pcall(setthreadidentity, previous)
+
+	return called, result
+end
+
 -- walks a path off an instance, every step guarded
 local function dig(root, ...)
 	local node = root
@@ -326,7 +348,7 @@ function bedwars.place_block(position, item)
 		return false
 	end
 
-	local ok = pcall(function()
+	local ok = bedwars.elevated(function()
 		if item then
 			placer.blockType = item
 		end
@@ -378,6 +400,12 @@ function bedwars.entity_util()
 		return nil
 	end
 
+	-- cats exact path first
+	local exported = require_instance(dig(replicated, "TS", "entity", "entity-util"))
+	if exported and type(exported.EntityUtil) == "table" then
+		return remember("entity_util", exported.EntityUtil)
+	end
+
 	local module = search_module_cached("entity-util")
 	local value = module
 	if module and type(module.getLocalPlayerEntity) ~= "function" and type(module.default) == "table" then
@@ -418,7 +446,7 @@ function bedwars.target_in_range(range, charge)
 	if not sword then
 		return nil
 	end
-	local ok, target = pcall(function()
+	local ok, target = bedwars.elevated(function()
 		return sword:getTargetInRegion(range, charge)
 	end)
 	if ok then
@@ -432,7 +460,7 @@ function bedwars.attack(entity, charge)
 	if not sword or not entity then
 		return false
 	end
-	local ok, result = pcall(function()
+	local ok, result = bedwars.elevated(function()
 		return sword:attackEntity(entity, nil, charge)
 	end)
 	return ok and result ~= false
@@ -692,6 +720,13 @@ function bedwars.sync_events()
 		return nil
 	end
 
+	-- cats exact path, it lives under playerscripts not replicated storage
+	local player = players.LocalPlayer
+	local exported = require_instance(dig(player, "PlayerScripts", "TS", "client-sync-events"))
+	if exported and type(exported.ClientSyncEvents) == "table" then
+		return remember("sync_events", exported.ClientSyncEvents)
+	end
+
 	local module = search_module_cached("client-sync-events")
 	if type(module) ~= "table" then
 		return remember("sync_events", nil)
@@ -718,7 +753,7 @@ function bedwars.equip(tool)
 		return true
 	end
 
-	local ok = pcall(function()
+	local ok = bedwars.elevated(function()
 		client:Get("EquipItem"):CallServerAsync({hand = tool})
 	end)
 
@@ -840,6 +875,17 @@ function bedwars.best_sword()
 
 	local best, best_damage
 
+	-- what you are holding counts first. the report showed held wood_sword with
+	-- best sword none, because the held item is not parented to the character as
+	-- a Tool, it is reached through HandInvItem
+	local held = bedwars.held_tool()
+	if held and bedwars.is_sword(held) then
+		local entry = meta and meta[held.Name]
+		local sword = type(entry) == "table" and entry.sword or nil
+		best = held
+		best_damage = sword and (tonumber(sword.damage) or tonumber(sword.attackDamage)) or 0
+	end
+
 	for _, container in ipairs(containers) do
 		for _, tool in ipairs(container:GetChildren()) do
 			if tool:IsA("Tool") then
@@ -918,7 +964,7 @@ function bedwars.add_movement_modifier(properties, priority)
 		return nil
 	end
 
-	local ok, handle = pcall(function()
+	local ok, handle = bedwars.elevated(function()
 		return host:addModifier(properties, priority)
 	end)
 	if ok and handle then
@@ -1197,7 +1243,7 @@ function bedwars.swing_at(character, weapon)
 	end
 
 	if wrapper then
-		local ok = pcall(function()
+		local ok = bedwars.elevated(function()
 			wrapper:SendToServer(payload)
 		end)
 		if ok then

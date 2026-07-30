@@ -82,7 +82,7 @@ fly.on_enable = function(self)
 	-- keep one balloon inflated and stop the game taking it back off us
 	if self:get("use balloons") and balloons then
 		if bedwars.inflated_balloons() == 0 then
-			pcall(function()
+			bedwars.elevated(function()
 				balloons:inflateBalloon()
 			end)
 		end
@@ -408,13 +408,13 @@ fast.on_enable = function(self)
 	-- setSpeed clamps to maxSpeed when it is set, clearing it lifts the ceiling
 	if self:get("clear speed cap") and sprint then
 		self.saved_max = sprint.maxSpeed
-		pcall(function()
+		bedwars.elevated(function()
 			sprint.maxSpeed = nil
 		end)
 		self.bin:add(function()
 			local current = bedwars.sprint_controller()
 			if current then
-				pcall(function()
+				bedwars.elevated(function()
 					current.maxSpeed = self.saved_max
 				end)
 			end
@@ -432,7 +432,7 @@ fast.on_enable = function(self)
 		self.saved_boost = read_ok and boost or nil
 
 		local function push()
-			pcall(function()
+			bedwars.elevated(function()
 				util.local_player():SetAttribute("SpeedBoost", self:get("multiplier"))
 			end)
 		end
@@ -483,7 +483,7 @@ fast.on_enable = function(self)
 		self.bin:add(function()
 			local current = bedwars.sprint_controller()
 			if current then
-				pcall(function()
+				bedwars.elevated(function()
 					current.moveSpeedMultiplier = self.saved_multiplier or 1
 				end)
 			end
@@ -503,7 +503,7 @@ fast.on_enable = function(self)
 	self.saved_boost = read_ok and boost or nil
 
 	local function push()
-		pcall(function()
+		bedwars.elevated(function()
 			util.local_player():SetAttribute("SpeedBoost", self:get("multiplier"))
 		end)
 	end
@@ -531,13 +531,13 @@ fast.on_tick = function(self)
 
 	local wanted = self:get("multiplier")
 	if sprint.moveSpeedMultiplier ~= wanted then
-		pcall(function()
+		bedwars.elevated(function()
 			sprint.moveSpeedMultiplier = wanted
 		end)
 	end
 
 	if self:get("clear speed cap") and sprint.maxSpeed ~= nil then
-		pcall(function()
+		bedwars.elevated(function()
 			sprint.maxSpeed = nil
 		end)
 	end

@@ -934,161 +934,148 @@ crosshair.on_enable = function(self)
 	self.bin:add(run_service.RenderStepped:Connect(layout))
 end
 
--- fov circle, shows the aim assist radius
+-- tracers
+-- one line per player from the bottom of the screen to them, coloured by their
+-- team. the colour is not a setting, that is the whole point of the module
 
-local fov_circle = render:module{name = "fov circle", description = "draws the aim assist radius"}
-fov_circle:slider{name = "radius", min = 20, max = 400, default = 110, suffix = " px"}
-fov_circle:toggle{name = "match aim assist", default = true}
-fov_circle:slider{name = "thickness", min = 1, max = 4, default = 1}
-fov_circle:color{name = "color", default = Color3.fromRGB(198, 134, 255)}
+local tracers = render:module{name = "tracers", description = "team coloured lines to every player"}
+tracers:slider{name = "thickness", min = 1, max = 4, default = 1}
+tracers:slider{name = "max distance", min = 100, max = 3000, default = 1200, suffix = " studs"}
+tracers:toggle{name = "hide teammates", default = false}
+tracers:dropdown{name = "origin", values = {"bottom", "center"}, default = "bottom"}
 
-fov_circle.on_enable = function(self)
-	local gui = state.ui.gui
-	if not gui then
-		error("meow: fov circle needs the client gui")
+-- bedwars team names map onto these, anything unknown falls back to the roblox
+-- team colour and then to a neutral grey
+local team_palette = {
+	red = Color3.fromRGB(255, 76, 76),
+	blue = Color3.fromRGB(76, 141, 255),
+	green = Color3.fromRGB(96, 220, 110),
+	yellow = Color3.fromRGB(255, 216, 84),
+	aqua = Color3.fromRGB(96, 226, 226),
+	cyan = Color3.fromRGB(96, 226, 226),
+	pink = Color3.fromRGB(255, 128, 196),
+	purple = Color3.fromRGB(186, 122, 255),
+	orange = Color3.fromRGB(255, 158, 74),
+	white = Color3.fromRGB(238, 238, 238),
+	gray = Color3.fromRGB(150, 150, 158),
+	grey = Color3.fromRGB(150, 150, 158),
+	black = Color3.fromRGB(90, 90, 100),
+}
+
+local function team_color(player)
+	local name = bedwars.team_of(player)
+
+	if type(name) == "string" then
+		local lower = name:lower()
+		for key, color in pairs(team_palette) do
+			if lower:find(key, 1, true) then
+				return color
+			end
+		end
 	end
 
-	-- a square with a full corner radius is a circle, the stroke draws the ring
-	local circle = new("Frame", {
-		Name = "fov",
-		Parent = gui,
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundTransparency = 1,
-		ZIndex = 1,
-	}, {
-		new("UICorner", {CornerRadius = UDim.new(1, 0)}),
-		util.stroke(self:get("color"), self:get("thickness"), 0.25),
-	})
-	self.bin:add(circle)
+	local ok, color = pcall(function()
+		return player.Team and player.Team.TeamColor and player.Team.TeamColor.Color
+	end)
+	if ok and color then
+		return color
+	end
 
-	local stroke = circle:FindFirstChildOfClass("UIStroke")
+	return Color3.fromRGB(170, 170, 180)
+end
+
+tracers.on_enable = function(self)
+	local gui = state.ui.gui
+	if not gui then
+		error("meow: tracers need the client gui")
+	end
+
+	local container = new("Frame", {
+		Name = "tracers",
+		Parent = gui,
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 0,
+	})
+	self.bin:add(container)
+
+	local lines = {}
+
+	local function drop(player)
+		local line = lines[player]
+		if line then
+			line:Destroy()
+			lines[player] = nil
+		end
+	end
+
+	self.bin:add(function()
+		for player in pairs(lines) do
+			drop(player)
+		end
+	end)
+	self.bin:add(players.PlayerRemoving:Connect(drop))
 
 	self.bin:add(run_service.RenderStepped:Connect(function()
 		local camera = workspace.CurrentCamera
-		local viewport = camera and camera.ViewportSize or Vector2.new(1920, 1080)
-
-		local radius = self:get("radius")
-		if self:get("match aim assist") then
-			local aim = manager.find("aim assist")
-			if aim then
-				radius = aim:get("fov") or radius
-			end
+		if not camera then
+			return
 		end
 
-		circle.Position = UDim2.fromOffset(viewport.X / 2, viewport.Y / 2)
-		circle.Size = UDim2.fromOffset(radius * 2, radius * 2)
-		stroke.Color = self:get("color")
-		stroke.Thickness = self:get("thickness")
+		local viewport = camera.ViewportSize
+		local me = util.local_player()
+		local my_root = util.root()
+		local thickness = self:get("thickness")
+		local limit = self:get("max distance")
+
+		local origin = self:get("origin") == "center"
+			and Vector2.new(viewport.X / 2, viewport.Y / 2)
+			or Vector2.new(viewport.X / 2, viewport.Y)
+
+		for _, player in ipairs(players:GetPlayers()) do
+			if player ~= me then
+				local line = lines[player]
+				if not line then
+					line = new("Frame", {
+						Parent = container,
+						AnchorPoint = Vector2.new(0, 0.5),
+						BorderSizePixel = 0,
+						Visible = false,
+						ZIndex = 1,
+					})
+					lines[player] = line
+				end
+
+				local root = util.root(player)
+				local show = root ~= nil and util.alive(player)
+
+				if show and self:get("hide teammates") and util.same_team(player) then
+					show = false
+				end
+
+				if show and my_root and (root.Position - my_root.Position).Magnitude > limit then
+					show = false
+				end
+
+				local screen, on_screen
+				if show then
+					screen, on_screen = camera:WorldToViewportPoint(root.Position)
+					show = on_screen
+				end
+
+				line.Visible = show
+
+				if show then
+					local target = Vector2.new(screen.X, screen.Y)
+					local delta = target - origin
+					line.Position = UDim2.fromOffset(origin.X, origin.Y)
+					line.Size = UDim2.fromOffset(delta.Magnitude, thickness)
+					line.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+					line.BackgroundColor3 = team_color(player)
+				end
+			end
+		end
 	end))
-end
-
--- object esp, labels anything whose name matches a keyword
-
-local objects = render:module{name = "object esp", description = "labels beds, chests and generators"}
-objects:dropdown{
-	name = "keywords",
-	values = {"bed", "chest", "generator", "spawner", "shop", "forge"},
-	default = {"bed", "chest", "generator"},
-	multi = true,
-}
-objects:slider{name = "max distance", min = 50, max = 1500, default = 450, suffix = " studs"}
-objects:slider{name = "rescan", min = 3, max = 30, default = 8, suffix = " s"}
-objects:color{name = "color", default = Color3.fromRGB(126, 217, 141)}
-
-objects.on_enable = function(self)
-	local host = state.ui.host or state.ui.gui
-	if not host then
-		error("meow: object esp needs the gui host")
-	end
-
-	local tags = {}
-	local running = true
-
-	self.bin:add(function()
-		running = false
-		for inst, tag in pairs(tags) do
-			if tag then
-				tag:Destroy()
-			end
-			tags[inst] = nil
-		end
-	end)
-
-	local function matches(name)
-		local lower = name:lower()
-		for _, key in ipairs(self:get("keywords")) do
-			if lower:find(key, 1, true) then
-				return true
-			end
-		end
-		return false
-	end
-
-	local function label_for(inst)
-		local billboard = new("BillboardGui", {
-			Name = "meow_object",
-			Parent = host,
-			Adornee = inst,
-			AlwaysOnTop = true,
-			Size = UDim2.fromOffset(180, 20),
-			StudsOffset = Vector3.new(0, 1.6, 0),
-			MaxDistance = self:get("max distance"),
-		})
-
-		local text = new("TextLabel", {
-			Parent = billboard,
-			BackgroundTransparency = 1,
-			Size = UDim2.fromScale(1, 1),
-			Text = inst.Name:lower(),
-			TextSize = theme.size.small,
-			TextColor3 = self:get("color"),
-			TextStrokeTransparency = 0.45,
-		})
-		theme.apply_font(text, "semibold")
-
-		return billboard
-	end
-
-	-- the descendant walk is spread across frames so a big map does not hitch
-	task.spawn(function()
-		while running do
-			local scanned = 0
-			local seen = {}
-
-			for _, inst in ipairs(workspace:GetDescendants()) do
-				if not running then
-					return
-				end
-				scanned = scanned + 1
-				-- a bedwars map is enormous, yield often so the frame survives
-				if scanned % 400 == 0 then
-					task.wait()
-				end
-				if (inst:IsA("BasePart") or inst:IsA("Model")) and matches(inst.Name) then
-					seen[inst] = true
-					if not tags[inst] then
-						tags[inst] = label_for(inst)
-					end
-				end
-			end
-
-			for inst, tag in pairs(tags) do
-				if not seen[inst] or not inst.Parent then
-					if tag then
-						tag:Destroy()
-					end
-					tags[inst] = nil
-				end
-			end
-
-			for _ = 1, math.floor(self:get("rescan") * 20) do
-				if not running then
-					return
-				end
-				task.wait(0.05)
-			end
-		end
-	end)
 end
 
 -- no fog, clears the haze without touching brightness
