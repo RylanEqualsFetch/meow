@@ -173,7 +173,8 @@ function util.signal()
 
 	function self:fire(...)
 		for _, handler in ipairs(self.handlers) do
-			local ok, err = pcall(handler, ...)
+			-- same identity problem as the option listeners, these fire from clicks
+			local ok, err = util.with_identity(handler, ...)
 			if not ok then
 				warn("meow: signal handler error: " .. tostring(err))
 			end
@@ -368,16 +369,47 @@ function util.drag(frame, handle, bin, opts)
 	return shared
 end
 
--- a spawned thread does not inherit the identity the client was injected with,
--- so anything it does to an Instance fails with "lacking capability Plugin".
--- restoring the config is the loud example, it fires every option listener from
--- a fresh thread. this raises the identity for the life of the thread
+-- thread identity
+-- meow is injected on a thread that can touch anything. spawned threads and
+-- roblox event handlers, which is what a ui click is, do not carry that, so they
+-- fail with "lacking capability Plugin" or "cannot access CoreGui". the identity
+-- we loaded with is captured once here and restored around anything that needs
+-- it. hardcoding a number is what broke this last time, 2 is lower than what an
+-- executor injects with and dropped access rather than granting it
+util.base_identity = nil
+
+if type(getthreadidentity) == "function" then
+	local ok, value = pcall(getthreadidentity)
+	if ok and type(value) == "number" then
+		util.base_identity = value
+	end
+end
+
+function util.with_identity(fn, ...)
+	if not util.base_identity or type(setthreadidentity) ~= "function" then
+		return pcall(fn, ...)
+	end
+
+	local ok, current = pcall(getthreadidentity)
+	if ok and current == util.base_identity then
+		return pcall(fn, ...)
+	end
+
+	pcall(setthreadidentity, util.base_identity)
+	local called, result = pcall(fn, ...)
+	if ok then
+		pcall(setthreadidentity, current)
+	end
+
+	return called, result
+end
+
 function util.spawn(fn, ...)
 	local args = table.pack(...)
 
 	task.spawn(function()
-		if type(setthreadidentity) == "function" then
-			pcall(setthreadidentity, 2)
+		if util.base_identity and type(setthreadidentity) == "function" then
+			pcall(setthreadidentity, util.base_identity)
 		end
 		fn(table.unpack(args, 1, args.n))
 	end)

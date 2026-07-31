@@ -40,14 +40,17 @@ function option_mt:set(value, silent)
 	end
 
 	self.value = value
+
+	-- listeners run from ui clicks and from the config restore, neither of which
+	-- carries the identity meow loaded with, so they are raised back to it
 	for _, fn in ipairs(self.listeners) do
-		local ok, err = pcall(fn, value, self)
+		local ok, err = util.with_identity(fn, value, self)
 		if not ok then
 			warn("meow: option listener error on " .. self.name .. ": " .. tostring(err))
 		end
 	end
 	if self.callback then
-		local ok, err = pcall(self.callback, value, self)
+		local ok, err = util.with_identity(self.callback, value, self)
 		if not ok then
 			warn("meow: option callback error on " .. self.name .. ": " .. tostring(err))
 		end
@@ -170,7 +173,9 @@ function module_mt:set_enabled(enabled, silent)
 
 	if enabled then
 		if self.on_enable then
-			local ok, err = pcall(self.on_enable, self)
+			-- a toggle from the window is a roblox event handler, it does not carry
+			-- our identity, so enabling anything that touches the game would fail
+			local ok, err = util.with_identity(self.on_enable, self)
 			if not ok then
 				warn("meow: " .. self.name .. " failed to enable: " .. tostring(err))
 				self.enabled = false
@@ -182,7 +187,7 @@ function module_mt:set_enabled(enabled, silent)
 	else
 		self.bin:clean()
 		if self.on_disable then
-			local ok, err = pcall(self.on_disable, self)
+			local ok, err = util.with_identity(self.on_disable, self)
 			if not ok then
 				warn("meow: " .. self.name .. " failed to disable: " .. tostring(err))
 			end
@@ -286,7 +291,7 @@ function manager.start(bin)
 	bin:add(run_service.Heartbeat:Connect(function(delta)
 		for _, mod in ipairs(manager.module_order) do
 			if mod.enabled and mod.on_tick then
-				local ok, err = pcall(mod.on_tick, mod, delta)
+				local ok, err = util.with_identity(mod.on_tick, mod, delta)
 				if not ok then
 					warn("meow: " .. mod.name .. " tick error: " .. tostring(err))
 					mod:set_enabled(false)
