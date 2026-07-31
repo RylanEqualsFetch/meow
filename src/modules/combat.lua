@@ -178,8 +178,11 @@ aura.on_tick = function(self)
 		end
 	end
 
-	-- controller, attackEntity, the loud path that was landing hits before
-	if use_controller or (not swung and method ~= "controller") then
+	-- controller, attackEntity. this is the loud one, it plays the swing effect and
+	-- the click, so it only ever runs when you asked for it. it used to run as an
+	-- automatic fallback whenever a silent send did not report a hit, which is
+	-- where the eighty clicks a second were coming from
+	if use_controller then
 		local target = bedwars.target_in_range(range)
 		aura.controller_targets = (aura.controller_targets or 0) + (target and 1 or 0)
 		if target and bedwars.attack(target) then
@@ -188,10 +191,12 @@ aura.on_tick = function(self)
 		end
 	end
 
+	-- the retry gap used to be 0.05, which meant twenty attempts a second whenever
+	-- nothing landed. it now backs off to the same rate you asked for
 	if swung then
 		self.next_swing = now + 1 / math.max(self:get("swings"), 1)
 	else
-		self.next_swing = now + 0.05
+		self.next_swing = now + math.max(1 / math.max(self:get("swings"), 1), 0.1)
 	end
 end
 

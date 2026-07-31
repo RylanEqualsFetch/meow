@@ -14,6 +14,21 @@ local lighting = util.services.Lighting
 
 local render = manager.category("render")
 
+-- shared by chest esp. it used to live inside the bed esp block and went with it
+-- when that was replaced by the cat port, which left chest esp calling a nil
+local function through_wall_highlight(adornee, parent, color)
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "meow_esp"
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.FillTransparency = 0.55
+	highlight.OutlineTransparency = 0
+	highlight.FillColor = color
+	highlight.OutlineColor = color
+	highlight.Adornee = adornee
+	highlight.Parent = parent
+	return highlight
+end
+
 -- esp
 
 local esp = render:module{name = "esp", description = "boxes, names and health on players"}

@@ -121,7 +121,8 @@ task.wait(0.1)
 -- its on_enable, and some of those yield, the texture pack and animation player
 -- both wait on game:GetObjects, so doing this inline left the splash parked on
 -- this stage forever whenever one of them was slow or never returned
-task.spawn(function()
+-- util.spawn, not task.spawn. a plain spawned thread cannot touch instances here
+util.spawn(function()
 	for _, mod in ipairs(manager.module_order) do
 		if mod.default_on then
 			pcall(function()

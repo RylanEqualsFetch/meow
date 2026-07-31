@@ -368,6 +368,21 @@ function util.drag(frame, handle, bin, opts)
 	return shared
 end
 
+-- a spawned thread does not inherit the identity the client was injected with,
+-- so anything it does to an Instance fails with "lacking capability Plugin".
+-- restoring the config is the loud example, it fires every option listener from
+-- a fresh thread. this raises the identity for the life of the thread
+function util.spawn(fn, ...)
+	local args = table.pack(...)
+
+	task.spawn(function()
+		if type(setthreadidentity) == "function" then
+			pcall(setthreadidentity, 2)
+		end
+		fn(table.unpack(args, 1, args.n))
+	end)
+end
+
 -- camera writes have to land after the game moves the camera each frame
 function util.render_step(name, fn, bin, priority)
 	local run_service = util.services.RunService
